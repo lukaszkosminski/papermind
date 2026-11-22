@@ -1,5 +1,6 @@
 package pl.lk.papermind.ocr
 
+import pl.lk.papermind.model.CrosswordGrid
 import pl.lk.papermind.model.OcrFrame
 import pl.lk.papermind.model.ParsedPage
 
@@ -9,6 +10,10 @@ import pl.lk.papermind.model.ParsedPage
  *
  * Ruch / rozmycie: gdy kolejne klatki różnią się mocno albo pewność OCR jest bardzo niska, okno stabilności
  * jest zerowane i nic nie jest emitowane.
+ *
+ * Krzyżówki: strona z siatką lub listą haseł wymaga podwójnego okna stabilności (drobny druk, więcej do
+ * odczytania), a deduplikacja uwzględnia podpis siatki — ta sama krzyżówka nie jest wysyłana ponownie,
+ * ale inna siatka przy identycznym tekście haseł już tak.
  *
  * Klasa jest czysta (bez Androida): czas wstrzykiwany przez [clock] ułatwia testy.
  */
@@ -44,9 +49,13 @@ class FrameStabilizer(
     private var lastEmitAt: Long? = null
     private var lastEmittedIds: Set<String>? = null
     private var lastEmittedText: String? = null
+    private var lastEmittedGridSig: String? = null
 
-    /** Przetwarza klatkę; zwraca stronę do wysłania do AI albo null (jeszcze nie stabilna / ta sama strona). */
-    fun onFrame(frame: OcrFrame): ParsedPage? {
+    /**
+     * Przetwarza klatkę; zwraca stronę do wysłania do AI albo null (jeszcze nie stabilna / ta sama strona).
+     * [grid] — siatka krzyżówki wykryta dla tej klatki (opcjonalnie; może być null, gdy w kadrze są same hasła).
+     */
+    fun onFrame(frame: OcrFrame, grid: CrosswordGrid? = null): ParsedPage? {
         val text = frame.fullText
         val now = clock()
 
@@ -69,23 +78,25 @@ class FrameStabilizer(
             anchorSince = now
             return null
         }
-        if (now - anchorSince < stabilityMs().coerceAtLeast(0L)) return null
+        if (now - anchorSince < requiredStabilityMs(text, grid)) return null
 
         val questions = parser.parse(frame)
-        if (questions.isEmpty()) {
+        if (questions.isEmpty() && grid == null) {
             // brak pytań (np. sam nagłówek) — sprawdzamy ponownie dopiero po kolejnym oknie stabilności
             anchorSince = now
             return null
         }
 
         val ids = questions.map { it.id }.toSet()
-        if (ids == lastEmittedIds) {
+        val gridSignature = grid?.let { gridSignature(it) }
+        if (ids == lastEmittedIds && gridSignature == lastEmittedGridSig) {
             anchorSince = now
             return null
         }
         // ta sama strona z drobnym szumem OCR (inny id, niemal identyczny tekst) — nie spamujemy AI
         val previousText = lastEmittedText
         if (previousText != null &&
+            gridSignature == lastEmittedGridSig &&
             ids.size == lastEmittedIds?.size &&
             TextNormalizer.similarityAtLeast(previousText, text, config.duplicateSimilarity)
         ) {
@@ -101,6 +112,7 @@ class FrameStabilizer(
 
         lastEmittedIds = ids
         lastEmittedText = text
+        lastEmittedGridSig = gridSignature
         lastEmitAt = now
         // po emisji wymagamy kolejnego okna stabilności (nawet jeśli kartka się nie zmieni)
         anchorText = text
@@ -109,7 +121,14 @@ class FrameStabilizer(
             timestampMs = frame.timestampMs,
             questions = questions,
             rawText = text,
+            grid = grid,
         )
+    }
+
+    /** Krzyżówka wymaga dłuższego okna (drobny druk, siatka + lista haseł). */
+    private fun requiredStabilityMs(text: String, grid: CrosswordGrid?): Long {
+        val base = stabilityMs().coerceAtLeast(0L)
+        return if (grid != null || CrosswordClueParser.looksLikeCrossword(text)) base * 2 else base
     }
 
     /** Czyści cały stan (np. po wyjściu z ekranu kamery). */
@@ -119,6 +138,7 @@ class FrameStabilizer(
         if (clearEmittedPages) {
             lastEmittedIds = null
             lastEmittedText = null
+            lastEmittedGridSig = null
             lastEmitAt = null
         }
     }
@@ -137,5 +157,19 @@ class FrameStabilizer(
 
     companion object {
         const val DEFAULT_STABILITY_MS = 700L
+
+        /** Podpis siatki do deduplikacji: wymiary + wzór pól + numeracja + sloty (bez współrzędnych). */
+        fun gridSignature(grid: CrosswordGrid): String = buildString {
+            append(grid.rows).append('x').append(grid.cols).append('|')
+            for (cell in grid.cells) {
+                append(if (cell.blocked) '#' else '.')
+                append(cell.number ?: "")
+                append(',')
+            }
+            append('|')
+            for (slot in grid.slots) {
+                append(slot.number).append(slot.direction.name.first()).append(slot.length).append(';')
+            }
+        }
     }
 }

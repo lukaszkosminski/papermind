@@ -6,7 +6,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import pl.lk.papermind.model.Box
+import pl.lk.papermind.model.CrosswordGrid
+import pl.lk.papermind.model.CrosswordSlot
 import pl.lk.papermind.model.DetectedQuestion
+import pl.lk.papermind.model.Direction
+import pl.lk.papermind.model.GridCell
 import pl.lk.papermind.model.OcrFrame
 import pl.lk.papermind.model.OcrLine
 import pl.lk.papermind.model.QuestionType
@@ -223,6 +227,89 @@ class FrameStabilizerTest {
         assertNull(s.onFrame(b))
         clock.advance(4_200)
         assertNotNull(s.onFrame(b))
+    }
+
+    private fun crosswordGrid(blocked: Set<Pair<Int, Int>> = emptySet()): CrosswordGrid {
+        val rows = 5
+        val cols = 5
+        val cells = (0 until rows).flatMap { r ->
+            (0 until cols).map { c ->
+                GridCell(
+                    row = r,
+                    col = c,
+                    box = Box(c * 10f, r * 10f, c * 10f + 10f, r * 10f + 10f),
+                    blocked = (r to c) in blocked,
+                    number = null,
+                )
+            }
+        }
+        val slots = listOf(
+            CrosswordSlot(1, Direction.ACROSS, cells.take(5)),
+            CrosswordSlot(1, Direction.DOWN, (0 until 5).map { cells[it * 5] }),
+            CrosswordSlot(6, Direction.ACROSS, cells.drop(5).take(5)),
+        )
+        return CrosswordGrid(rows, cols, Box(0f, 0f, 50f, 50f), cells, slots)
+    }
+
+    @Test
+    fun `strona z krzyzowka wymaga podwojnego okna stabilnosci`() {
+        val clock = FakeClock()
+        val s = FrameStabilizer(RegexQuestionParser(), 700L, { clock.now })
+        val f = frame("Poziomo\n1. Kot (3)\n2. Pies (4)")
+
+        assertNull(s.onFrame(f))
+        clock.advance(700)
+        assertNull("krzyżówka: 700 ms to za krótko", s.onFrame(f))
+        clock.advance(700)
+        val page = s.onFrame(f)
+        assertNotNull(page)
+        assertEquals(2, page!!.questions.count { it.type == QuestionType.CROSSWORD_CLUE })
+    }
+
+    @Test
+    fun `siatka jest dolaczana do strony i dedup uwzglednia jej podpis`() {
+        val clock = FakeClock()
+        val s = stabilizer(clock)
+        val text = frame("Krzyżówka do rozwiązania")
+        val gridA = crosswordGrid(blocked = setOf(1 to 1))
+        val gridB = crosswordGrid(blocked = setOf(2 to 2))
+
+        // strona z siatką ma podwójne okno stabilności (1400 ms)
+        s.onFrame(text, gridA)
+        clock.advance(700)
+        assertNull(s.onFrame(text, gridA))
+        clock.advance(700)
+        val first = s.onFrame(text, gridA)
+        assertNotNull(first)
+        assertEquals(gridA.rows, first!!.grid?.rows)
+
+        clock.advance(1_400)
+        assertNull(s.onFrame(text, gridA))
+
+        clock.advance(1_400)
+        val second = s.onFrame(text, gridB)
+        assertNotNull("inna siatka przy tym samym tekście ma zostać wysłana", second)
+        assertEquals(gridB.cells.count { it.blocked }, second!!.grid?.cells?.count { it.blocked })
+    }
+
+    @Test
+    fun `sama siatka bez haseł tez jest emitowana`() {
+        val clock = FakeClock()
+        val emptyParser = object : QuestionParser {
+            override fun parse(frame: OcrFrame): List<DetectedQuestion> = emptyList()
+        }
+        val s = FrameStabilizer(emptyParser, 700L, { clock.now })
+        val grid = crosswordGrid()
+        val f = frame("(siatka bez odczytanego tekstu)")
+
+        assertNull(s.onFrame(f, grid))
+        clock.advance(700)
+        assertNull(s.onFrame(f, grid))
+        clock.advance(700)
+        val page = s.onFrame(f, grid)
+        assertNotNull(page)
+        assertTrue(page!!.questions.isEmpty())
+        assertNotNull(page.grid)
     }
 
     @Test

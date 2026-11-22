@@ -110,3 +110,86 @@ zależność `androidx.camera:camera-mlkit-vision` (1.7.0). `gradle.properties` 
 
 `assembleDebug` + `testDebugUnitTest` zielone. Testy OCR: 77 (parser 32, stabilizator 11, id 8, wzorce 14,
 normalizator 12 — w tym test wydajności i zgodności `similarityAtLeast` z `similarity`).
+
+---
+
+## Krzyżówki (v1)
+
+### Co zrobione
+
+**`CrosswordClueParser`** (nowy, czysta logika JVM, wywoływany z `RegexQuestionParser.parse` *przed* segmentacją pytań):
+- nagłówki `Poziomo` / `Pionowo` / `Across` / `Down` (dwukropek, kropka, wersaliki, opcjonalne `(5)`), także z pierwszym
+  hasłem w tej samej linii (`Poziomo: 1. Kot (3)`),
+- hasła `1. treść (5)`, `1) treść`, `12 treść [7]`, `3. treść 5 liter`, kilka haseł w jednej linii
+  (osobne `Box` przez proporcjonalne cięcie linii),
+- zawinięte hasło (kolejna linia bez numeru, zaczynająca się małą literą) jest doklejane do poprzedniego razem z długością,
+- wynik: `DetectedQuestion(type = CROSSWORD_CLUE, number = numer, clue = CrosswordClue(number, direction, length))`,
+  `text` bez numeru i znacznika długości; linie spoza listy wracają do zwykłej segmentacji,
+- stabilne id: `QuestionId.forClue` = kierunek + numer + kanoniczna treść (odporne na 0/o, 1/l, 5/s, 8/b, rn/m,
+  diakrytyki, interpunkcję),
+- krzyżówka panoramiczna (hasła w polach, bez nagłówka) nie jest rozpoznawana, ale parser się nie wywraca.
+
+**`CrosswordGridDetector`** (nowy, czysta logika JVM na luminancji Y):
+- downscale do ~640 px dłuższego boku, binaryzacja Otsu + lokalna średnia (integral image),
+- estymacja lekkiego obrotu ±5°: rzut ciemnych pikseli na oś „w poprzek linii", metryka = suma 3 najwyższych
+  binów rzutu (bin ~3 px) + refine co 0.1°; przy znikomej poprawie względem 0° zostaje 0°,
+- obrót maski do układu linii poziomych/pionowych, detekcja linii jako najdłuższych ciągów ciemnych pikseli
+  (tolerancja 2 px przerwy), walidacja regularności okresu (dopasowanie do sieci) i kwadratowości komórek,
+- `blocked` = udział ciemnych pikseli w komórce (inset 16%) ≥ 0.5,
+- numeracja: standardowa (komórka startuje slot poziomy/pionowy długości ≥ 2) + **numery z OCR** (same cyfry,
+  mała wysokość, lewy górny róg komórki); numery OCR wygrywają, gdy zgodność ze standardem ≥ 60%,
+  z deduplikacją numerów,
+- odrzucanie fałszywych siatek/tabel: min. 5×5, wymagane czarne pola **lub** wiarygodna numeracja, brak
+  całkowicie zaczernionego wiersza/kolumny, komórki kwadratowe (±40%), regularny okres,
+- sloty ACROSS/DOWN; boxy w pikselach obrazu wejściowego, `CrosswordGrid.remapBoxes { }` przenosi je do widoku.
+
+**`MlKitOcrPipeline`**:
+- `FrameAnalyzer` co **500 ms** (nie każdą klatkę) kopiuje płaszczyznę Y *przed* przekazaniem klatki do ML Kit
+  oraz macierz obraz→widok; macierz odtwarza obliczenia `MlKitAnalyzer` (sensor→buffer ∘ rotacja ML Kit,
+  odwrócone, złożone z sensor→view z `updateTransform`), więc boxy są w pikselach PreviewView,
+- snapshoty dopasowywane po timestampie klatki (bufor 3, TTL 2 s), detekcja w wątku przetwarzania
+  (`Dispatchers.Default`), nie na UI,
+- siatka jest trzymana między klatkami i zdejmowana dopiero, gdy tekst zmieni się wyraźnie (inna strona),
+- `ParsedPage.grid` + `snapshotJpeg` tylko dla stron z siatką lub hasłami; JPEG ~80%, skala szarości,
+  dłuższy bok ≤ 1600 px, orientacja wg `rotationDegrees`, kodowanie poza wątkiem UI (przy emisji strony),
+- numery OCR do detektora: boxy z widoku mapowane do obrazu przez odwrotność macierzy obraz→widok.
+
+**`FrameStabilizer`**:
+- `onFrame(frame, grid = null)`; strony z siatką lub listą haseł mają **automatycznie podwójne** okno stabilności
+  (UI nie musi nic włączać),
+- dedup uwzględnia podpis siatki (wymiary + wzór pól + numeracja + sloty): ta sama krzyżówka nie jest wysyłana
+  ponownie, ale inna siatka przy identycznym tekście haseł — tak,
+- strona z samą siatką (bez odczytanych haseł) też jest emitowana.
+
+### Dla UI (agent C)
+
+- `ParsedPage.grid` — boxy komórek w pikselach widoku; `GridCell.blocked` do pomijania, `number` w komórce startowej,
+  `CrosswordSlot.cells` w kolejności liter; slot łączy się z hasłem przez `(number, direction)`.
+- Hasła to `DetectedQuestion.type == CROSSWORD_CLUE`; `clue.number`, `clue.direction`, `clue.length`;
+  `text` = treść hasła (bez numeru i „(5)").
+- `snapshotJpeg` bywa dołączony **tylko** dla stron krzyżówkowych.
+- Tryb „Krzyżówka" nie musi niczego włączać w OCR — stabilizator sam wydłuża okno ×2 dla stron z siatką
+  lub nagłówkiem listy haseł.
+
+### Dla AI (agent B)
+
+- `CrosswordClue.pattern` jest `null` (OCR nie zna jeszcze skrzyżowań) — solver powinien zbudować
+  `"_".repeat(length)` i uzupełnić litery z siatki.
+- `ParsedPage.grid` + `snapshotJpeg` są dostępne dla multimodalności.
+- Numery haseł = numery slotów (para `(number, direction)`), więc odpowiedzi da się wstawić w komórki.
+
+### Ograniczenia / otwarte
+
+- Perspektywa nie jest korygowana (tylko obrót ±5°); silne zniekształcenie perspektywiczne → brak detekcji.
+- Krzyżówki panoramiczne (hasła w polach) poza v1.
+- Lista haseł wymaga nagłówka kierunku; bez nagłówka hasła trafiają do zwykłego parsera pytań.
+- Numery OCR są ufane przy zgodności ≥ 60% ze standardową numeracją; przy niższej używana jest standardowa.
+- Wykrywanie siatki odbywa się najwyżej co 500 ms i tylko dla klatek, dla których jest snapshot
+  (przy dużym obciążeniu część klatek jest pomijana — z założenia).
+- JPEG powstaje przy emisji strony, więc może być do ~0,5 s starszy od klatki.
+- Testy detektora są syntetyczne (JVM); brak testów na urządzeniu.
+
+### Testy po dodaniu krzyżówek
+
+`assembleDebug` + `testDebugUnitTest` zielone. Testy OCR: 107 (12 parsera haseł, 15 detektora siatki,
+14 stabilizatora, 32 parsera pytań, 14 wzorców, 8 id, 12 normalizatora).
