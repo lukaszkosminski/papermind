@@ -135,7 +135,7 @@ class QuestionPatternsTest {
 
     @Test
     fun `id pytania jest skroconym sha1`() {
-        val id = QuestionId.of("Który narząd produkuje insulinę?", listOf("A", "B", "C", "D"))
+        val id = QuestionId.of("Który narząd produkuje insulinę?", 4)
         assertEquals(16, id.length)
         assertTrue(id.all { it in '0'..'9' || it in 'a'..'f' })
         assertNotNull(id)

@@ -362,13 +362,22 @@ class RegexQuestionParserTest {
     }
 
     @Test
-    fun `id zmienia sie gdy zmieni sie tresc lub opcje`() {
+    fun `id zmienia sie gdy zmieni sie tresc lub liczba opcji`() {
         val base = parser.parse(page("1. Pytanie o serce?", "A. tak", "B. nie")).single()
         val otherStem = parser.parse(page("1. Pytanie o płuca?", "A. tak", "B. nie")).single()
-        val otherOption = parser.parse(page("1. Pytanie o serce?", "A. tak", "B. może", "C. nie wiem")).single()
+        val otherCount = parser.parse(page("1. Pytanie o serce?", "A. tak", "B. może", "C. nie wiem")).single()
 
         assertNotEquals(base.id, otherStem.id)
-        assertNotEquals(base.id, otherOption.id)
+        assertNotEquals(base.id, otherCount.id)
+    }
+
+    @Test
+    fun `id jest odporne na typowe pomylki OCR`() {
+        val original = parser.parse(page("1. Insulina to hormon białkowy produkowany przez trzustkę?", "A. tak", "B. nie")).single()
+        // 0/o, 1/l, 5/s, 8/b, i/l, brak diakrytyków — typowe pomyłki ML Kit
+        val noisy = parser.parse(page("1. In5ulina to h0rmon b1alkowy pr0dukowany przez trzustke?", "A. tak", "B. nie")).single()
+
+        assertEquals(original.id, noisy.id)
     }
 
     @Test

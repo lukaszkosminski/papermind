@@ -176,14 +176,32 @@ class FrameStabilizerTest {
     fun `szum OCR nie powoduje ponownej emisji tej samej strony`() {
         val clock = FakeClock()
         val s = stabilizer(clock)
-        val a = frame("1. Który narząd produkuje insulinę?\nA. wątroba\nB. trzustka")
-        // jedna litera mniej = inny id, ale tekst praktycznie identyczny
-        val b = frame("1. Który narząd produkuje insulinę?\nA. wątroba\nB. trzuska")
+        // długa strona (100+ unikalnych tokenów), żeby Jaccard nie spadł poniżej progu duplikatu
+        val page = listOf(
+            "1. Który narząd produkuje insulinę?",
+            "A. wątroba B. trzustka C. nerki D. śledziona",
+            "2. Jakie objawy występują w zawale serca?",
+            "A. ból w klatce piersiowej B. duszność C. poty D. nudności",
+            "3. Wymień witaminy rozpuszczalne w tłuszczach.",
+            "A. witamina A B. witamina D C. witamina E D. witamina K",
+            "4. Oblicz pole koła o promieniu trzech centymetrów.",
+            "5. Wyjaśnij różnicę między mitozą a mejozą w komórkach.",
+            "6. Zaznacz wszystkie poprawne odpowiedzi o układzie odpornościowym.",
+            "7. Podaj dwa przykłady enzymów trawiennych i miejsce ich działania.",
+            "8. Opisz mechanizm wymiany gazowej w pęcherzykach płucnych.",
+            "9. Zdefiniuj homeostazę i wyjaśnij jej znaczenie dla organizmu.",
+        ).joinToString("\n")
+        // jedna litera mniej (inny id), ale tekst praktycznie identyczny
+        val noisy = page.replaceFirst("trzustka", "trzuska")
+        val a = frame(page)
+        val b = frame(noisy)
 
         s.onFrame(a)
         clock.advance(700)
         assertNotNull(s.onFrame(a))
         clock.advance(700)
+        assertNull("szum OCR nie może wywołać kolejnej emisji", s.onFrame(b))
+        clock.advance(2_000)
         assertNull(s.onFrame(b))
     }
 
