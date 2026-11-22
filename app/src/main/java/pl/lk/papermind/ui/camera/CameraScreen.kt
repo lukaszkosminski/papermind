@@ -1,5 +1,6 @@
 package pl.lk.papermind.ui.camera
 
+import pl.lk.papermind.ocr.MlKitOcrPipeline
 import android.Manifest
 import android.content.Context
 import android.content.ContextWrapper
@@ -163,14 +164,6 @@ private fun PermissionScreen(onResult: (Boolean) -> Unit) {
     }
 }
 
-// TODO: docelowo pobierać z OcrPipeline, na razie 1080p 16:9
-private val ANALYSIS_RESOLUTION = ResolutionSelector.Builder()
-    .setResolutionStrategy(
-        ResolutionStrategy(Size(1920, 1080), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
-    )
-    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
-    .build()
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSettings: () -> Unit) {
@@ -184,8 +177,7 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
             setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
             isTapToFocusEnabled = true
             isPinchToZoomEnabled = true
-            imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-            imageAnalysisResolutionSelector = ANALYSIS_RESOLUTION
+            MlKitOcrPipeline.configureController(this)
         }
     }
     val executor = remember { Executors.newSingleThreadExecutor() }
