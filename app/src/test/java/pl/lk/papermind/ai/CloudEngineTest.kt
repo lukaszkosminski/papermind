@@ -50,7 +50,7 @@ class CloudEngineTest {
         val body = Json.parseToJsonElement(req.body!!.utf8()).jsonObject
         assertEquals("claude-haiku-5-5", body["model"]!!.jsonPrimitive.content)
         assertTrue(body["system"]!!.jsonPrimitive.content.contains("STRICT JSON"))
-        assertTrue(body["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonPrimitive.content.contains("id=q1"))
+        assertTrue(body["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonPrimitive.content.contains("id=Q1"))
     }
 
     @Test fun anthropicCustomModel() = runTest {
@@ -105,10 +105,57 @@ class CloudEngineTest {
         }
     }
 
-    @Test fun availabilityRequiresKey() = runTest {
-        assertFalse(engine(AppSettings(cloudApiKey = "")).isAvailable())
-        assertTrue(engine(AppSettings(cloudApiKey = "k")).isAvailable())
+    @Test fun availabilityBlankKeyNoRequest() = runTest {
+        assertFalse(engine(AppSettings(cloudApiKey = "  ")).isAvailable())
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun availabilityProbesModelsEndpointAndCachesSuccess() = runTest {
+        server.enqueue(json("""{"data":[]}"""))
+        val e = engine(AppSettings(cloudProvider = CloudProvider.ANTHROPIC, cloudApiKey = "k"))
+        assertTrue(e.isAvailable())
+        assertTrue(e.isAvailable()) // z cache
+        assertEquals(1, server.requestCount)
+        val req = server.takeRequest()
+        assertEquals("/v1/models", req.url.encodedPath)
+        assertEquals("k", req.headers["x-api-key"])
+    }
+
+    @Test fun availabilityFalseOnBadKeyTrueOnRateLimit() = runTest {
+        server.enqueue(MockResponse.Builder().code(401).body("{}").build())
+        assertFalse(engine(AppSettings(cloudProvider = CloudProvider.OPENAI, cloudApiKey = "bad")).isAvailable())
+        server.enqueue(MockResponse.Builder().code(429).body("{}").build())
+        assertTrue(engine(AppSettings(cloudProvider = CloudProvider.GEMINI, cloudApiKey = "k")).isAvailable())
+        assertEquals("/v1/models", server.takeRequest().url.encodedPath)
+        assertTrue(server.takeRequest().url.encodedPath.startsWith("/v1beta/models"))
+    }
+
+    @Test fun availabilityFalseWhenServerDown() = runTest {
+        val e = engine(AppSettings(cloudApiKey = "k"))
+        server.close()
+        assertFalse(e.isAvailable())
+    }
+
+    @Test fun `#10 whitespace and newlines around key are trimmed`() = runTest {
+        server.enqueue(json("""{"content":[{"type":"text","text":${jstr(answerJson)}}]}"""))
+        engine(AppSettings(cloudApiKey = "  sk-ant\n ", cloudModel = " claude-haiku-5-5\n")).answer(page(choiceQ("q1")))
+        val req = server.takeRequest()
+        assertEquals("sk-ant", req.headers["x-api-key"])
+    }
+
+    @Test fun `#10 key with illegal characters gives EngineException not crash`() = runTest {
+        try {
+            engine(AppSettings(cloudApiKey = "sk\u0001ant")).answer(page(choiceQ("q1")))
+            fail()
+        } catch (e: EngineException) {
+            assertTrue(e.message!!.contains("konfiguracja"))
+        }
+    }
+
+    @Test fun defaultModelsAreCurrent() {
+        assertEquals("claude-haiku-5-5", CloudEngine.defaultModel(CloudProvider.ANTHROPIC))
+        assertEquals("gemini-3.8-flash", CloudEngine.defaultModel(CloudProvider.GEMINI))
+        assertEquals("gpt-6-luna", CloudEngine.defaultModel(CloudProvider.OPENAI))
     }
 
     @Test fun missingKeyThrows() = runTest {

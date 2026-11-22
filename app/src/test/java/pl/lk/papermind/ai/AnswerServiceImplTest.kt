@@ -1,11 +1,15 @@
 package pl.lk.papermind.ai
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -16,6 +20,7 @@ import pl.lk.papermind.model.Answer
 import pl.lk.papermind.model.AnswerState
 import pl.lk.papermind.model.EngineId
 import pl.lk.papermind.model.ParsedPage
+import pl.lk.papermind.model.QuestionType
 import pl.lk.papermind.settings.AppSettings
 import pl.lk.papermind.settings.SettingsRepository
 
@@ -50,8 +55,13 @@ class FakeEngine(
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AnswerServiceImplTest {
-    private fun TestScope.service(vararg e: AnswerEngine, settings: AppSettings = AppSettings(engine = EngineId.CLOUD)) =
-        AnswerServiceImpl(e.toList(), FakeSettings(settings), this)
+    private fun TestScope.service(
+        vararg e: AnswerEngine,
+        settings: AppSettings = AppSettings(engine = EngineId.CLOUD),
+        repo: FakeSettings = FakeSettings(settings),
+        timeouts: Map<EngineId, Long> = AnswerServiceImpl.DEFAULT_TIMEOUTS_MS,
+    ) =
+        AnswerServiceImpl(e.toList(), repo, CoroutineScope(StandardTestDispatcher(testScheduler) + Job()), timeouts = timeouts, clock = { testScheduler.currentTime })
 
     private suspend fun AnswerServiceImpl.current() = answers.first()
 
@@ -172,6 +182,7 @@ class AnswerServiceImplTest {
         advanceUntilIdle()
         assertTrue(s.current()["a"] is AnswerState.Failed)
         cloud.failure = null
+        advanceTimeBy(AnswerServiceImpl.RETRY_BACKOFF_MS[0] + 1)
         s.submit(page(openQ("a")))
         advanceUntilIdle()
         assertTrue(s.current()["a"] is AnswerState.Ready)
@@ -222,5 +233,153 @@ class AnswerServiceImplTest {
         s.submit(page(openQ("a")))
         advanceUntilIdle()
         assertTrue((s.current()["a"] as AnswerState.Failed).message.contains("silników"))
+    }
+
+    // --- regresje po review ---
+
+    @Test fun `#1 result of in-flight query is kept when page changes but shares questions`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val cloud = FakeEngine(EngineId.CLOUD, gate = gate)
+        val s = service(cloud)
+        s.submit(page(openQ("a"), openQ("b")))
+        runCurrent()
+        s.submit(page(openQ("a"))) // drżenie ręki: inna strona, wspólne pytanie -> bez anulowania
+        runCurrent()
+        assertEquals(0, cloud.cancelled)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(setOf("a"), s.current().keys)
+        assertTrue(s.current()["a"] is AnswerState.Ready)
+        // "b" nie było na bieżącej stronie, ale odpowiedź trafiła do cache
+        s.submit(page(openQ("a"), openQ("b")))
+        assertTrue(s.current()["b"] is AnswerState.Ready)
+        advanceUntilIdle()
+        assertEquals(1, cloud.calls.size)
+    }
+
+    @Test fun `#1 overlapping new questions are sent without resending in-flight ones`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val cloud = FakeEngine(EngineId.CLOUD, gate = gate)
+        val s = service(cloud)
+        s.submit(page(openQ("a")))
+        runCurrent()
+        s.submit(page(openQ("a"), openQ("c")))
+        runCurrent()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf("a"), listOf("c")), cloud.calls)
+        assertTrue(s.current().values.all { it is AnswerState.Ready })
+    }
+
+    @Test fun `#2 failed question is not retried within backoff, then backs off progressively`() = runTest {
+        val cloud = FakeEngine(EngineId.CLOUD, failure = EngineException("HTTP 401"))
+        val s = service(cloud)
+        repeat(5) {
+            s.submit(page(openQ("a")))
+            advanceTimeBy(1_000)
+        }
+        advanceUntilIdle()
+        assertEquals(1, cloud.calls.size)
+        assertTrue(s.current()["a"] is AnswerState.Failed) // stan błędu nie miga na Pending
+        advanceTimeBy(10_000)
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
+        // drugi błąd -> backoff 20 s
+        advanceTimeBy(15_000)
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
+        advanceTimeBy(6_000)
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertEquals(3, cloud.calls.size)
+    }
+
+    @Test fun `#2 settings change and clear reset backoff`() = runTest {
+        val repo = FakeSettings(AppSettings(engine = EngineId.CLOUD))
+        val cloud = FakeEngine(EngineId.CLOUD, failure = EngineException("HTTP 401"))
+        val s = service(cloud, repo = repo)
+        runCurrent()
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertEquals(1, cloud.calls.size)
+        repo.update { it.copy(cloudApiKey = "nowy-klucz") }
+        runCurrent()
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
+        s.clear()
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertEquals(3, cloud.calls.size)
+    }
+
+    @Test fun `#5 hung engine times out and falls back`() = runTest {
+        val hung = FakeEngine(EngineId.OPENCODE, gate = CompletableDeferred())
+        val cloud = FakeEngine(EngineId.CLOUD)
+        val s = service(hung, cloud, settings = AppSettings(engine = EngineId.OPENCODE),
+            timeouts = mapOf(EngineId.OPENCODE to 45_000L, EngineId.CLOUD to 30_000L))
+        s.submit(page(openQ("a")))
+        runCurrent()
+        assertTrue(s.current()["a"] is AnswerState.Pending)
+        advanceTimeBy(44_000)
+        assertTrue(s.current()["a"] is AnswerState.Pending)
+        advanceTimeBy(1_500)
+        runCurrent()
+        assertEquals(EngineId.CLOUD, (s.current()["a"] as AnswerState.Ready).answer.engine)
+        assertEquals(1, hung.cancelled)
+    }
+
+    @Test fun `#5 timeout without fallback reports readable failure`() = runTest {
+        val hung = FakeEngine(EngineId.OPENCODE, gate = CompletableDeferred())
+        val s = service(hung, settings = AppSettings(engine = EngineId.OPENCODE, fallbackEnabled = false),
+            timeouts = mapOf(EngineId.OPENCODE to 5_000L))
+        s.submit(page(openQ("a")))
+        advanceUntilIdle()
+        assertTrue((s.current()["a"] as AnswerState.Failed).message.contains("czas"))
+    }
+
+    @Test fun `#17 fuzzy cache reuses answer for OCR-noised question with same options`() = runTest {
+        val cloud = FakeEngine(EngineId.CLOUD)
+        val s = service(cloud)
+        s.submit(page(choiceQ("old")))
+        advanceUntilIdle()
+        val noisy = choiceQ("new").copy(text = "Która organeIla produkuje ATP ?") // l -> I, spacja
+        s.submit(page(noisy))
+        val st = s.current()["new"] as AnswerState.Ready
+        assertEquals("new", st.answer.questionId)
+        advanceUntilIdle()
+        assertEquals(1, cloud.calls.size)
+    }
+
+    @Test fun `#17 fuzzy cache does not match different text or different options`() = runTest {
+        val cloud = FakeEngine(EngineId.CLOUD)
+        val s = service(cloud)
+        s.submit(page(choiceQ("old")))
+        advanceUntilIdle()
+        val other = choiceQ("other").copy(text = "Który narząd odpowiada za filtrowanie krwi u człowieka?")
+        val fewerOptions = choiceQ("fewer").let { it.copy(options = it.options.take(2)) }
+        s.submit(page(other, fewerOptions))
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
+        assertEquals(listOf("other", "fewer"), cloud.calls[1])
+    }
+
+    @Test fun diceBasics() {
+        assertEquals(1.0, AnswerServiceImpl.dice("Ala ma kota", "ala  MA kota!"), 1e-9)
+        assertTrue(AnswerServiceImpl.dice("abcdef", "uvwxyz") < 0.1)
+    }
+
+    @Test fun `#17 fuzzy cache never merges questions that differ in digits`() = runTest {
+        val cloud = FakeEngine(EngineId.CLOUD)
+        val s = service(cloud)
+        s.submit(page(openQ("m1", QuestionType.MATH, "Ile wynosi wynik działania 12 + 7 w systemie dziesiętnym?")))
+        advanceUntilIdle()
+        s.submit(page(openQ("m2", QuestionType.MATH, "Ile wynosi wynik działania 12 + 8 w systemie dziesiętnym?")))
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
     }
 }

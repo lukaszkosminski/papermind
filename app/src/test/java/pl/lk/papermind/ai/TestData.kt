@@ -18,7 +18,7 @@ fun choiceQ(id: String = "q1", type: QuestionType = QuestionType.SINGLE_CHOICE) 
     box = ZERO_BOX,
 )
 
-fun openQ(id: String, type: QuestionType = QuestionType.OPEN, text: String = "Stolica Polski?") =
+fun openQ(id: String, type: QuestionType = QuestionType.OPEN, text: String = "Pytanie ${id.repeat(8)} dotyczące tematu $id") =
     DetectedQuestion(id, null, type, text, emptyList(), ZERO_BOX)
 
 fun page(vararg q: DetectedQuestion, raw: String = "raw text") = ParsedPage(0L, q.toList(), raw)

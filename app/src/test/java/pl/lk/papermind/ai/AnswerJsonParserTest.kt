@@ -81,4 +81,43 @@ class AnswerJsonParserTest {
         val r = parse("""{"answers":[{"id":"q2","options":["A"],"text":"x"}]}""")
         assertTrue(r[0].correctOptionLabels.isEmpty())
     }
+
+    // --- #4: dopasowanie fallbackowe ---
+    private val hashed = listOf(
+        choiceQ("4a1f8e29bc0193ad"),
+        openQ("9bb02c77e1d4f600"),
+    ).mapIndexed { i, q -> q.copy(number = (i + 1).toString()) }
+
+    private fun parseH(raw: String) = AnswerJsonParser.parse(raw, hashed, EngineId.CLOUD)
+
+    @Test fun matchesByPromptAlias() {
+        val r = parseH("""{"answers":[{"id":"Q2","text":"Warszawa"},{"id":"q1","options":["B"]}]}""")
+        assertEquals(listOf("9bb02c77e1d4f600", "4a1f8e29bc0193ad"), r.map { it.questionId })
+    }
+
+    @Test fun matchesByNumericIdStringOrInt() {
+        val r = parseH("""{"answers":[{"id":1,"options":["C"]},{"id":"2","text":"Kraków"}]}""")
+        assertEquals(listOf("4a1f8e29bc0193ad", "9bb02c77e1d4f600"), r.map { it.questionId })
+        assertEquals(listOf("C"), r[0].correctOptionLabels)
+    }
+
+    @Test fun matchesByQuestionNumberWithDecoration() {
+        val qs = listOf(openQ("h1").copy(number = "Zad. 1"), openQ("h2").copy(number = "2)"))
+        val r = AnswerJsonParser.parse("""[{"id":"zad1","text":"x"},{"id":"2.","text":"y"}]""", qs, EngineId.CLOUD)
+        assertEquals(listOf("h1", "h2"), r.map { it.questionId })
+    }
+
+    @Test fun fallsBackToOrderWhenNoIdMatchesAndCountEquals() {
+        val r = parseH("""{"answers":[{"id":"alfa","options":["A"]},{"id":"beta","text":"coś"}]}""")
+        assertEquals(listOf("4a1f8e29bc0193ad", "9bb02c77e1d4f600"), r.map { it.questionId })
+        val noIds = parseH("""{"answers":[{"options":["A"]},{"text":"coś"}]}""")
+        assertEquals(2, noIds.size)
+    }
+
+    @Test fun noOrderFallbackWhenCountDiffersOrSomeIdsMatch() {
+        assertTrue(parseH("""{"answers":[{"id":"alfa","text":"x"}]}""").isEmpty())
+        // jeden trafiony po id -> pozostałe nieznane NIE są przypisywane po kolejności
+        val r = parseH("""{"answers":[{"id":"alfa","text":"x"},{"id":"Q2","text":"y"}]}""")
+        assertEquals(listOf("9bb02c77e1d4f600"), r.map { it.questionId })
+    }
 }

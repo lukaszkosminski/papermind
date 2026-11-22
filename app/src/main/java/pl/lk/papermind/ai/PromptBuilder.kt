@@ -13,6 +13,9 @@ data class Prompt(val system: String, val user: String) {
 object PromptBuilder {
     const val DEFAULT_MAX_RAW_CHARS = 6000
 
+    /** Krótki alias pytania w prompcie (zamiast 16-znakowego hasha, który małe modele przekręcają). */
+    fun alias(index: Int) = "Q${index + 1}"
+
     private val languageNames = mapOf(
         "pl" to "Polish", "en" to "English", "de" to "German", "fr" to "French",
         "es" to "Spanish", "it" to "Italian", "uk" to "Ukrainian", "cs" to "Czech",
@@ -47,13 +50,13 @@ object PromptBuilder {
             appendLine("For choice questions you may also fill text with the chosen option's text.")
             appendLine("confidence: number from 0.0 to 1.0. $explanationRule")
             appendLine("Output STRICT JSON only — no markdown, no code fences, no commentary — exactly in this shape:")
-            append("{\"answers\":[{\"id\":\"<question id>\",\"options\":[\"B\"],\"text\":\"short answer up to 12 words\",\"explanation\":\"1-2 sentences\",\"confidence\":0.9}]}")
+            append("{\"answers\":[{\"id\":\"Q1\",\"options\":[\"B\"],\"text\":\"short answer up to 12 words\",\"explanation\":\"1-2 sentences\",\"confidence\":0.9}]}")
         }
     }
 
     private fun user(page: ParsedPage, compact: Boolean, maxRawChars: Int): String = buildString {
         appendLine("QUESTIONS:")
-        page.questions.forEach { appendQuestion(it) }
+        page.questions.forEachIndexed { i, q -> appendQuestion(alias(i), q) }
         val raw = truncate(page.rawText, maxRawChars)
         if (raw.isNotBlank()) {
             appendLine()
@@ -63,11 +66,11 @@ object PromptBuilder {
             appendLine("\"\"\"")
         }
         appendLine()
-        append(if (compact) "Return the JSON now." else "Return the JSON now, with one entry per question id listed above.")
+        append(if (compact) "Return the JSON now." else "Return the JSON now, with one entry per question id (Q1, Q2, …) listed above.")
     }
 
-    private fun StringBuilder.appendQuestion(q: DetectedQuestion) {
-        append("[id=").append(q.id).append(" | type=").append(q.type.name)
+    private fun StringBuilder.appendQuestion(alias: String, q: DetectedQuestion) {
+        append("[id=").append(alias).append(" | type=").append(q.type.name)
         q.number?.let { append(" | no=").append(it) }
         appendLine("]")
         appendLine(q.text.trim())

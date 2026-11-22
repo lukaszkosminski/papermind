@@ -9,10 +9,10 @@ import pl.lk.papermind.model.QuestionType
 class PromptBuilderTest {
     @Test fun containsQuestionsOptionsAndRawText() {
         val p = PromptBuilder.build(page(choiceQ("abc123"), openQ("x9", QuestionType.MATH, "2+2?"), raw = "OCR tekst strony"), "pl")
-        assertTrue(p.user.contains("id=abc123"))
+        assertTrue(p.user.contains("id=Q1 ") && !p.user.contains("abc123"))
         assertTrue(p.user.contains("type=SINGLE_CHOICE"))
         assertTrue(p.user.contains("B) Mitochondrium"))
-        assertTrue(p.user.contains("id=x9") && p.user.contains("type=MATH") && p.user.contains("2+2?"))
+        assertTrue(p.user.contains("id=Q2 ") && p.user.contains("type=MATH") && p.user.contains("2+2?"))
         assertTrue(p.user.contains("OCR tekst strony"))
         assertTrue(p.system.contains("Polish"))
         assertTrue(p.system.contains("STRICT JSON"))

@@ -1,5 +1,6 @@
 package pl.lk.papermind.ai
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -30,29 +31,74 @@ class CloudEngine(
     private val settings: Flow<AppSettings>,
     private val client: OkHttpClient = defaultClient(),
     private val baseUrls: Map<CloudProvider, String> = DEFAULT_BASE_URLS,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : AnswerEngine {
     override val id = EngineId.CLOUD
 
-    override suspend fun isAvailable(): Boolean = settings.first().cloudApiKey.isNotBlank()
+    private var availableUntil = 0L
+    private var availableKey = ""
 
-    override suspend fun answer(page: ParsedPage): List<Answer> {
-        val s = settings.first()
-        if (s.cloudApiKey.isBlank()) throw EngineException("Brak klucza API dla chmury")
-        val prompt = PromptBuilder.build(page, s.language)
-        val model = s.cloudModel.ifBlank { defaultModel(s.cloudProvider) }
-        val request = buildRequest(s, model, prompt)
-        val result = try {
-            client.newCall(request).await()
-        } catch (e: IOException) {
-            throw EngineException("${s.cloudProvider.label()}: błąd sieci (${e.message ?: e.javaClass.simpleName})", e)
+    /** Klucz ustawiony + lekkie zapytanie o listę modeli (timeout 5 s); sukces cache'owany na [AVAILABILITY_TTL_MS]. */
+    override suspend fun isAvailable(): Boolean {
+        val s = settings.first().sanitized()
+        if (s.cloudApiKey.isEmpty()) return false
+        val fingerprint = "${s.cloudProvider}|${s.cloudApiKey}"
+        if (availableKey == fingerprint && clock() < availableUntil) return true
+        val ok = try {
+            val c = client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build()
+            val r = c.newCall(buildProbe(s)).await()
+            r.ok || r.code == 429 // 429 = klucz poprawny, tylko limit
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
         }
-        if (!result.ok) throw EngineException("${s.cloudProvider.label()}: HTTP ${result.code} ${errorMessage(result.body)}".trim())
-        val text = withContext(Dispatchers.Default) { extractText(s.cloudProvider, result.body) }
-        if (text.isBlank()) throw EngineException("${s.cloudProvider.label()}: pusta odpowiedź modelu")
-        return AnswerJsonParser.parse(text, page.questions, id)
+        if (ok) { availableKey = fingerprint; availableUntil = clock() + AVAILABILITY_TTL_MS } else availableKey = ""
+        return ok
     }
 
-    internal fun buildRequest(s: AppSettings, model: String, prompt: Prompt): Request {
+    override suspend fun answer(page: ParsedPage): List<Answer> {
+        val s = settings.first().sanitized()
+        if (s.cloudApiKey.isEmpty()) throw EngineException("Brak klucza API dla chmury")
+        val label = s.cloudProvider.label()
+        try {
+            val prompt = PromptBuilder.build(page, s.language)
+            val model = s.cloudModel.ifBlank { defaultModel(s.cloudProvider) }
+            val request = buildRequest(s, model, prompt)
+            val result = client.newCall(request).await()
+            if (!result.ok) throw EngineException("$label: HTTP ${result.code} ${errorMessage(result.body)}".trim())
+            val text = withContext(Dispatchers.Default) { extractText(s.cloudProvider, result.body) }
+            if (text.isBlank()) throw EngineException("$label: pusta odpowiedź modelu")
+            return AnswerJsonParser.parse(text, page.questions, id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: EngineException) {
+            throw e
+        } catch (e: IOException) {
+            throw EngineException("$label: błąd sieci (${e.message ?: e.javaClass.simpleName})", e)
+        } catch (e: IllegalArgumentException) {
+            throw EngineException("$label: niepoprawna konfiguracja (klucz API / model zawiera niedozwolone znaki)", e)
+        } catch (e: Exception) {
+            throw EngineException("$label: ${e.message ?: e.javaClass.simpleName}", e)
+        }
+    }
+
+    private fun AppSettings.sanitized() = copy(cloudApiKey = cloudApiKey.trim(), cloudModel = cloudModel.trim())
+
+    internal fun buildProbe(s: AppSettings): Request {
+        val base = (baseUrls[s.cloudProvider] ?: DEFAULT_BASE_URLS.getValue(s.cloudProvider)).trimEnd('/')
+        return when (s.cloudProvider) {
+            CloudProvider.ANTHROPIC -> Request.Builder().url("$base/v1/models?limit=1")
+                .header("x-api-key", s.cloudApiKey).header("anthropic-version", ANTHROPIC_VERSION).get().build()
+            CloudProvider.GEMINI -> Request.Builder().url("$base/v1beta/models?pageSize=1")
+                .header("x-goog-api-key", s.cloudApiKey).get().build()
+            CloudProvider.OPENAI -> Request.Builder().url("$base/v1/models")
+                .header("Authorization", "Bearer ${s.cloudApiKey}").get().build()
+        }
+    }
+
+    internal fun buildRequest(s0: AppSettings, model: String, prompt: Prompt): Request {
+        val s = s0.sanitized()
         val base = (baseUrls[s.cloudProvider] ?: DEFAULT_BASE_URLS.getValue(s.cloudProvider)).trimEnd('/')
         val media = "application/json".toMediaType()
         return when (s.cloudProvider) {
@@ -109,6 +155,7 @@ class CloudEngine(
     }
 
     companion object {
+        const val AVAILABILITY_TTL_MS = 60_000L
         const val ANTHROPIC_VERSION = "2023-06-01"
         const val MAX_OUTPUT_TOKENS = 2048
         val DEFAULT_BASE_URLS = mapOf(
@@ -120,8 +167,8 @@ class CloudEngine(
 
         fun defaultModel(p: CloudProvider) = when (p) {
             CloudProvider.ANTHROPIC -> "claude-haiku-5-5"
-            CloudProvider.GEMINI -> "gemini-2.5-flash"
-            CloudProvider.OPENAI -> "gpt-5-mini"
+            CloudProvider.GEMINI -> "gemini-3.8-flash"
+            CloudProvider.OPENAI -> "gpt-6-luna"
         }
 
         private fun CloudProvider.label() = when (this) {
@@ -130,7 +177,7 @@ class CloudEngine(
             CloudProvider.OPENAI -> "OpenAI"
         }
 
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+        fun defaultClient(): OkHttpClient = Http.sharedClient.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .callTimeout(75, TimeUnit.SECONDS)

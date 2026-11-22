@@ -8,8 +8,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 private val Context.paperMindStore: DataStore<Preferences> by preferencesDataStore(name = "papermind_settings")
 
@@ -17,13 +21,16 @@ private val Context.paperMindStore: DataStore<Preferences> by preferencesDataSto
 class DataStoreSettingsRepository internal constructor(
     private val store: DataStore<Preferences>,
     private val cipher: SecretCodec,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : SettingsRepository {
 
     constructor(context: Context) : this(context.applicationContext.paperMindStore, KeystoreCodec(KeystoreCipher()))
 
-    override val settings: Flow<AppSettings> = store.data.map { it.toSettings() }
+    /** Deszyfrowanie (Keystore/Binder IPC) poza wątkiem głównym. */
+    override val settings: Flow<AppSettings> = store.data.map { it.toSettings() }.flowOn(io)
 
-    override suspend fun update(transform: (AppSettings) -> AppSettings) {
+    /** Szyfrowanie (Keystore/Binder IPC) poza wątkiem głównym — także gdy wołający jest na Main. */
+    override suspend fun update(transform: (AppSettings) -> AppSettings) = withContext(io) {
         store.edit { prefs ->
             val next = transform(prefs.toSettings())
             prefs[ENGINE] = next.engine.name
@@ -39,6 +46,7 @@ class DataStoreSettingsRepository internal constructor(
             prefs[EXPLAIN] = next.showExplanations
             prefs[STABILITY] = next.stabilityMs
         }
+        Unit
     }
 
     private fun Preferences.toSettings(): AppSettings {
