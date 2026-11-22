@@ -21,8 +21,20 @@ object AnswerText {
     fun isChoiceAnswer(q: DetectedQuestion, a: Answer): Boolean =
         q.type in closedTypes && a.correctOptionLabels.isNotEmpty()
 
+    /** Odmiana liczby liter po polsku (1 litera, 2-4 litery, 5 liter). */
+    fun letterCountSuffix(n: Int): String = when {
+        n == 1 -> "1 litera"
+        n % 10 in 2..4 && (n % 100 !in 12..14) -> "$n litery"
+        else -> "$n liter"
+    }
+
     /** Krótki tekst odpowiedzi do dymka / panelu. */
     fun summary(q: DetectedQuestion, a: Answer): String {
+        if (q.type == QuestionType.CROSSWORD_CLUE && a.text.isNotBlank()) {
+            val word = a.text.trim().uppercase()
+            val len = q.clue?.length ?: word.length
+            return "$word (${letterCountSuffix(len)})"
+        }
         if (a.correctOptionLabels.isNotEmpty() && q.options.isNotEmpty()) {
             val opts = correctOptions(q, a)
             if (opts.isNotEmpty()) return opts.joinToString(", ") { "${it.label}. ${it.text}".trim() }

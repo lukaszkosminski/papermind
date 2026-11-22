@@ -28,12 +28,16 @@ import pl.lk.papermind.ai.AnswerEngine
 import pl.lk.papermind.ai.AnswerService
 import pl.lk.papermind.model.AnswerState
 import pl.lk.papermind.model.Box
+import pl.lk.papermind.model.CrosswordGrid
 import pl.lk.papermind.model.EngineId
+import pl.lk.papermind.model.GridCell
 import pl.lk.papermind.model.OcrFrame
 import pl.lk.papermind.model.ParsedPage
 import pl.lk.papermind.ocr.OcrPipeline
 import pl.lk.papermind.settings.AppSettings
 import pl.lk.papermind.settings.SettingsRepository
+import pl.lk.papermind.ui.crossword.GridTracker
+import pl.lk.papermind.ui.crossword.crosswordLetters
 import pl.lk.papermind.ui.tracking.OverlayTracker
 import pl.lk.papermind.ui.tracking.TrackedQuestion
 import java.util.concurrent.Executor
@@ -50,6 +54,7 @@ class MainViewModel(
     /** Dispatcher liczenia dopasowań nakładki (w testach: testowy). */
     trackingDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val tracker: OverlayTracker = OverlayTracker(),
+    private val gridTracker: GridTracker = GridTracker(),
     private val connectionTimeoutMs: Long = 15_000,
 ) : ViewModel() {
 
@@ -58,50 +63,83 @@ class MainViewModel(
     private val selected = MutableStateFlow<String?>(null)
     private val currentPage = MutableStateFlow<ParsedPage?>(null)
     private val showLineOutlines = MutableStateFlow(false)
+    private val crosswordMode = MutableStateFlow(false)
+    private var baseStabilityMs: Long? = null
     private val connection = MutableStateFlow<ConnectionTest>(ConnectionTest.Idle)
 
-    private class Tracking(val lines: List<Box>, val tracked: Map<String, TrackedQuestion>)
+    private class Tracking(val lines: List<Box>, val tracked: Map<String, TrackedQuestion>, val grid: CrosswordGrid?)
 
     private val tracking: Flow<Tracking> = combine(
         currentPage,
         ocr.frames.filter { !frozen.value }.onStart { emit(OcrFrame(0, emptyList())) },
     ) { page, frame ->
         val questions = page?.questions.orEmpty()
+        val trackedGrid = gridTracker.update(page?.grid, frame)
         Tracking(
             lines = frame.lines.map { it.box },
             tracked = tracker.update(questions, frame).associateBy { it.questionId },
+            grid = trackedGrid,
         )
     }.conflate().flowOn(trackingDispatcher)
 
-    private class Content(val items: List<QuestionUi>, val lines: List<Box>)
+    private class Content(
+        val items: List<QuestionUi>,
+        val lines: List<Box>,
+        val grid: CrosswordGrid?,
+        val crosswordLetters: Map<GridCell, Char>,
+    )
 
     private val content: Flow<Content> = combine(currentPage, tracking, answerService.answers) { page, tr, answers ->
         val items = page?.questions.orEmpty().map { q ->
             QuestionUi(q, answers[q.id] ?: AnswerState.Pending, tr.tracked[q.id])
         }
-        Content(items, tr.lines)
+        val grid = tr.grid ?: page?.grid
+        val letters = if (grid != null && page != null) crosswordLetters(grid, page.questions, answers) else emptyMap()
+        Content(items, tr.lines, grid, letters)
+    }
+
+    private class Controls(
+        val selectedId: String?,
+        val frozen: Boolean,
+        val showLineOutlines: Boolean,
+        val connection: ConnectionTest,
+        val frozenBitmap: android.graphics.Bitmap?,
+        val crosswordMode: Boolean,
+    )
+
+    private val controls: Flow<Controls> = combine(
+        selected, frozen, showLineOutlines, connection, frozenBitmap, crosswordMode,
+    ) { array: Array<Any?> ->
+        Controls(
+            selectedId = array[0] as String?,
+            frozen = array[1] as Boolean,
+            showLineOutlines = array[2] as Boolean,
+            connection = array[3] as ConnectionTest,
+            frozenBitmap = array[4] as? android.graphics.Bitmap,
+            crosswordMode = array[5] as Boolean,
+        )
     }
 
     val uiState: StateFlow<UiState> = combine(
         content,
-        combine(selected, frozen, showLineOutlines, connection, frozenBitmap) { sel, fr, lines, conn, bmp ->
-            arrayOf(sel, fr, lines, conn, bmp)
-        },
+        controls,
         settingsRepository.settings,
     ) { c, ctl, settings ->
-        val fr = ctl[1] as Boolean
         val active = c.items.firstNotNullOfOrNull { (it.state as? AnswerState.Ready)?.answer?.engine }
         UiState(
             items = c.items,
             lineBoxes = c.lines,
-            selectedId = ctl[0] as String?,
-            frozen = fr,
-            showLineOutlines = ctl[2] as Boolean,
+            selectedId = ctl.selectedId,
+            frozen = ctl.frozen,
+            showLineOutlines = ctl.showLineOutlines,
             settings = settings,
-            connection = ctl[3] as ConnectionTest,
-            status = statusOf(fr, c.items),
+            connection = ctl.connection,
+            status = statusOf(ctl.frozen, c.items),
             activeEngine = active ?: settings.engine,
-            frozenBitmap = ctl[4] as? android.graphics.Bitmap,
+            frozenBitmap = ctl.frozenBitmap,
+            grid = c.grid,
+            crosswordLetters = c.crosswordLetters,
+            crosswordMode = ctl.crosswordMode,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
 
@@ -131,6 +169,29 @@ class MainViewModel(
 
     fun toggleLineOutlines() = showLineOutlines.update { !it }
 
+    /**
+     * Przełącza tryb rozwiązywania krzyżówek:
+     * zwiększa czas stabilizacji x2 (daje więcej czasu na nieruchome trzymanie kamery)
+     * oraz wyświetla wskazówkę w UI.
+     */
+    fun toggleCrosswordMode() {
+        crosswordMode.update { wasOn ->
+            val next = !wasOn
+            viewModelScope.launch {
+                val current = settingsRepository.settings.first().stabilityMs
+                if (next) {
+                    baseStabilityMs = current
+                    settingsRepository.update { it.copy(stabilityMs = (current * 2).coerceAtMost(5_000L)) }
+                } else {
+                    val restore = baseStabilityMs ?: (current / 2)
+                    baseStabilityMs = null
+                    settingsRepository.update { it.copy(stabilityMs = restore.coerceIn(150L, 5_000L)) }
+                }
+            }
+            next
+        }
+    }
+
     /** Tap na pytaniu w panelu: podświetla je na nakładce (ponowny tap zdejmuje podświetlenie). */
     fun select(questionId: String) = selected.update { if (it == questionId) null else questionId }
 
@@ -141,6 +202,7 @@ class MainViewModel(
         selected.value = null
         frozenBitmap.value = null
         tracker.reset()
+        gridTracker.reset()
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {

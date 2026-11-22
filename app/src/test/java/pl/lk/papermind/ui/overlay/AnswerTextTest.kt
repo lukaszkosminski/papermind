@@ -7,7 +7,9 @@ import org.junit.Test
 import pl.lk.papermind.model.Answer
 import pl.lk.papermind.model.AnswerOption
 import pl.lk.papermind.model.Box
+import pl.lk.papermind.model.CrosswordClue
 import pl.lk.papermind.model.DetectedQuestion
+import pl.lk.papermind.model.Direction
 import pl.lk.papermind.model.EngineId
 import pl.lk.papermind.model.QuestionType
 
@@ -80,5 +82,31 @@ class AnswerTextTest {
         val shortened = AnswerText.shorten(longText, 30)
         assertTrue(shortened.endsWith("…"))
         assertTrue(shortened.length <= 30)
+    }
+
+    @Test
+    fun letterCountSuffix_formatsPolishFormsCorrectly() {
+        assertEquals("1 litera", AnswerText.letterCountSuffix(1))
+        assertEquals("2 litery", AnswerText.letterCountSuffix(2))
+        assertEquals("3 litery", AnswerText.letterCountSuffix(3))
+        assertEquals("4 litery", AnswerText.letterCountSuffix(4))
+        assertEquals("5 liter", AnswerText.letterCountSuffix(5))
+        assertEquals("12 liter", AnswerText.letterCountSuffix(12))
+        assertEquals("22 litery", AnswerText.letterCountSuffix(22))
+    }
+
+    @Test
+    fun summary_formatsCrosswordClueWithLength() {
+        val clue = DetectedQuestion(
+            id = "cw1",
+            number = "1",
+            type = QuestionType.CROSSWORD_CLUE,
+            text = "Stolica Francji",
+            options = emptyList(),
+            box = Box(0f, 0f, 100f, 50f),
+            clue = CrosswordClue(1, Direction.ACROSS, 5),
+        )
+        val answer = Answer("cw1", text = "Paryż", engine = EngineId.GEMINI_NANO)
+        assertEquals("PARYŻ (5 liter)", AnswerText.summary(clue, answer))
     }
 }

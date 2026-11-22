@@ -6,6 +6,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -28,8 +29,13 @@ import pl.lk.papermind.model.Answer
 import pl.lk.papermind.model.AnswerOption
 import pl.lk.papermind.model.AnswerState
 import pl.lk.papermind.model.Box
+import pl.lk.papermind.model.CrosswordClue
+import pl.lk.papermind.model.CrosswordGrid
+import pl.lk.papermind.model.CrosswordSlot
 import pl.lk.papermind.model.DetectedQuestion
+import pl.lk.papermind.model.Direction
 import pl.lk.papermind.model.EngineId
+import pl.lk.papermind.model.GridCell
 import pl.lk.papermind.model.OcrFrame
 import pl.lk.papermind.model.ParsedPage
 import pl.lk.papermind.model.QuestionType
@@ -373,6 +379,84 @@ class MainViewModelTest {
             assertFalse(conn.ok)
             assertTrue(conn.detail?.contains("Brak silnika") == true)
         }
+
+        job.cancel()
+    }
+
+    @Test
+    fun toggleCrosswordMode_doublesStabilityMs_andRestoresOnSecondToggle() = runTest(testDispatcher) {
+        val initialStability = settingsRepo.settings.first().stabilityMs
+        val vm = createViewModel()
+        val job = launch { vm.uiState.collect {} }
+
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.crosswordMode)
+
+        // Toggle on
+        vm.toggleCrosswordMode()
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.crosswordMode)
+        assertEquals(initialStability * 2, settingsRepo.settings.first().stabilityMs)
+
+        // Toggle off
+        vm.toggleCrosswordMode()
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.crosswordMode)
+        assertEquals(initialStability, settingsRepo.settings.first().stabilityMs)
+
+        job.cancel()
+    }
+
+    @Test
+    fun pageEmission_withCrosswordGrid_updatesGridAndLettersInUiState() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        val job = launch { vm.uiState.collect {} }
+
+        advanceUntilIdle()
+
+        val cell1 = GridCell(0, 0, Box(0f, 0f, 10f, 10f), blocked = false, number = 1)
+        val cell2 = GridCell(0, 1, Box(10f, 0f, 20f, 10f), blocked = false)
+        val cell3 = GridCell(0, 2, Box(20f, 0f, 30f, 10f), blocked = false)
+        val sampleGrid = CrosswordGrid(
+            rows = 1, cols = 3,
+            box = Box(0f, 0f, 30f, 10f),
+            cells = listOf(cell1, cell2, cell3),
+            slots = listOf(CrosswordSlot(1, Direction.ACROSS, listOf(cell1, cell2, cell3))),
+        )
+        val clue = DetectedQuestion(
+            id = "cw-1",
+            number = "1",
+            type = QuestionType.CROSSWORD_CLUE,
+            text = "Bicz",
+            options = emptyList(),
+            box = Box(0f, 20f, 100f, 40f),
+            clue = CrosswordClue(1, Direction.ACROSS, 3),
+        )
+        val cwPage = ParsedPage(
+            timestampMs = 2000L,
+            questions = listOf(clue),
+            rawText = "1. Bicz (3)",
+            grid = sampleGrid,
+        )
+
+        ocr.pageFlow.emit(cwPage)
+        advanceUntilIdle()
+
+        assertNotNull(vm.uiState.value.grid)
+        assertEquals(1, vm.uiState.value.grid!!.slots.size)
+
+        // Supply ready answer
+        answerService.answersState.value = mapOf(
+            "cw-1" to AnswerState.Ready(Answer("cw-1", text = "BAT", confidence = 0.95f, engine = EngineId.GEMINI_NANO)),
+        )
+        advanceUntilIdle()
+
+        val letters = vm.uiState.value.crosswordLetters
+        assertEquals('B', letters[cell1])
+        assertEquals('A', letters[cell2])
+        assertEquals('T', letters[cell3])
 
         job.cancel()
     }

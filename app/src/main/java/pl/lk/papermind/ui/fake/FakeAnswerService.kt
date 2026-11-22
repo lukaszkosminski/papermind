@@ -47,6 +47,15 @@ class FakeAnswerService(
         state.value = emptyMap()
     }
 
+    private val sampleCrosswordAnswers = mapOf(
+        "cw-1a" to "BAT",
+        "cw-3a" to "LOKAL",
+        "cw-5a" to "TAK",
+        "cw-1d" to "BALET",
+        "cw-2d" to "TEKST",
+        "cw-4d" to "LALEK",
+    )
+
     private fun answerFor(q: DetectedQuestion): Answer = when (q.type) {
         QuestionType.SINGLE_CHOICE -> Answer(q.id, listOf(q.options.getOrNull(1)?.label ?: "A"),
             explanation = "Przykładowe uzasadnienie wyboru.", confidence = 0.92f, engine = engine)
@@ -54,7 +63,10 @@ class FakeAnswerService(
             explanation = "Przykładowe uzasadnienie.", confidence = 0.8f, engine = engine)
         QuestionType.OPEN -> Answer(q.id, text = "Proces, w którym rośliny zamieniają światło, wodę i CO₂ w glukozę i tlen.",
             explanation = "Zachodzi w chloroplastach.", confidence = 0.7f, engine = engine)
-        QuestionType.CROSSWORD_CLUE -> Answer(q.id, text = "A".repeat(q.clue?.length ?: 5), confidence = 0.6f, engine = engine)
+        QuestionType.CROSSWORD_CLUE -> {
+            val text = sampleCrosswordAnswers[q.id] ?: "A".repeat(q.clue?.length ?: 5)
+            Answer(q.id, text = text, confidence = 0.94f, engine = engine)
+        }
         QuestionType.MATH -> Answer(q.id, text = "89", explanation = "12·7 = 84, 84 + 5 = 89.", confidence = 0.99f, engine = engine)
         QuestionType.FORM_FIELD -> Answer(q.id, text = "Jan Kowalski", confidence = 0.4f, engine = engine)
     }

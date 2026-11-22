@@ -2,8 +2,10 @@ package pl.lk.papermind.ui
 
 import pl.lk.papermind.model.AnswerState
 import pl.lk.papermind.model.Box
+import pl.lk.papermind.model.CrosswordGrid
 import pl.lk.papermind.model.DetectedQuestion
 import pl.lk.papermind.model.EngineId
+import pl.lk.papermind.model.GridCell
 import pl.lk.papermind.settings.AppSettings
 import pl.lk.papermind.ui.tracking.TrackedQuestion
 
@@ -36,4 +38,10 @@ data class UiState(
     val activeEngine: EngineId = EngineId.GEMINI_NANO,
     /** Klatka podglądu z momentu wstrzymania (zachowywana przy rotacji ekranu). */
     val frozenBitmap: android.graphics.Bitmap? = null,
+    /** Siatka krzyżówki (jeśli wykryta w bieżącej stronie, przeliczona przez GridTracker). */
+    val grid: CrosswordGrid? = null,
+    /** Litery wpisane w komórki siatki. */
+    val crosswordLetters: Map<GridCell, Char> = emptyMap(),
+    /** Tryb rozwiązywania krzyżówek (zwiększona stabilizacja x2 + wskazówka). */
+    val crosswordMode: Boolean = false,
 )
