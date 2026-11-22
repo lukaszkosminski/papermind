@@ -98,3 +98,38 @@ Wykonano wszystkie punkty przypisane do roli `ui` z `briefs/fixes.md` na podstaw
 - `MainViewModelTest.freeze_managesFrozenBitmap_andClearsOnClear`: weryfikacja przechowywania bitmapy w `UiState.frozenBitmap` podczas wstrzymania oraz jej czyszczenia przy wznowieniu i `clear()`.
 - `SettingsSnapTest.textInputs_trimmedProperly`: weryfikacja trimowania wartości tekstowych.
 - Pełny zestaw testów jednostkowych projektu: zielony (`./gradlew assembleDebug testDebugUnitTest` zakończony sukcesem).
+
+## Krzyżówki
+
+Wdrożono pełną obsługę rozwiązywania krzyżówek dla roli `ui`:
+
+1. **Nakładka AR i siatka (`AnswerOverlay.kt`, `CrosswordLetters.kt`, `GridTracker.kt`)**:
+   - Gdy na stronie wykryto siatkę (`page.grid != null`), nakładka rysuje litery w komórkach: wyśrodkowane, rozmiar ~60% wysokości komórki, kontrastowy granatowy kolor z białym rozmyciem/cieniem (zapewniającym czytelność na papierze i druku gazetowym), z pomijaniem komórek zablokowanych (`blocked`).
+   - Implementacja `crosswordLetters(...)` mapująca litery wyrazów z odpowiedzi do komórek siatki; w przypadku skrzyżowań wyrazów z różnymi literami wygrywa litera z odpowiedzi o wyższym `confidence` (oznaczono TODO do zamiany na implementację z pakietu `ai` po merge).
+   - Śledzenie ruchu kamery: `GridTracker` śledzi przesunięcie pozycji siatki w kolejnych klatkach `OcrFrame` na podstawie dopasowania linii z numerkami komórek wewnątrz siatki, stosuje liniowe wygładzanie przesunięć i przelicza pozycje komórek/slotów (lub opiera się na `grid.box` ze stabilizowanej strony).
+   - Sloty w stanie `Pending` otrzymują przerywany obrys pulsacyjny (`PathEffect.dashPathEffect`).
+   - Wybrane hasło podświetla powiązany slot w siatce (wypełnienie i ramka w kolorze `OverlayColors.Selected`).
+
+2. **Dymki przy hasłach bez siatki w kadrze (`AnswerText.kt`, `AnswerOverlay.kt`)**:
+   - Gdy siatka nie jest w kadrze (`page.grid == null`), a wykryto treść haseł na kartce, odpowiedzi `CROSSWORD_CLUE` renderowane są w dymkach nakładki z formatem: wyraz WIELKIMI literami + poprawna odmiana liczby liter, np. `"BAT (3 litery)"`, `"PARYŻ (5 liter)"`.
+   - Funkcja `AnswerText.letterCountSuffix(n)` obsługuje reguły języka polskiego (1 litera, 2-4 litery, 5 liter).
+
+3. **Panel dolny — sekcja „Krzyżówka” (`AnswerPanel.kt`)**:
+   - Pytania typu `QuestionType.CROSSWORD_CLUE` są grupowane w sekcję „Krzyżówka” z podziałem na nagłówki „Poziomo” i „Pionowo”.
+   - Każdy wiersz hasła prezentuje numer w kółku, skróconą treść hasła, a po otrzymaniu odpowiedzi — wyraz złożony fontem `FontFamily.Monospace` z odstępami między literami (np. `B  A  T`), liczbę liter i metadane silnika.
+   - Tapnięcie na wiersz hasła (`onSelect`) zaznacza je w stanie i natychmiast podświetla odpowiadający mu slot w siatce na nakładce AR.
+
+4. **Przycisk/tryb „Krzyżówka” (`CameraScreen.kt`, `MainViewModel.kt`, `res/values/strings.xml`)**:
+   - Dodano przycisk trybu krzyżówki w `TopControls` z ikoną `GridOn` / `GridOff`.
+   - Włączenie trybu zwiększa czas stabilizacji x2 (`settings.stabilityMs * 2`), dając użytkownikowi więcej czasu na stabilne utrzymanie kadru nad dużą stroną z krzyżówką, a po wyłączeniu przywraca pierwotną wartość.
+   - Wyświetla animowaną wskazówkę w UI: „Zmieść siatkę i hasła w kadrze; trzymaj nieruchomo”.
+
+5. **Fake'i (`FakeOcrPipeline.kt`, `FakeAnswerService.kt`)**:
+   - `FakeOcrPipeline` generuje kompletną, w 100% poprawną semantycznie siatkę 5x5 ze skrzyżowaniami słów (BAT, LOKAL, TAK / BALET, TEKST, LALEK), polami czarnymi, numerowanymi komórkami oraz hasłami POZIOMO i PIONOWO, dołączając `grid` do emitowanego `ParsedPage`.
+   - `FakeAnswerService` symuluje natychmiastowe poprawne odpowiedzi dla przykładowych haseł krzyżówki.
+
+6. **Testy jednostkowe JVM**:
+   - `CrosswordLettersTest`: mapowanie liter na komórki siatki, rozstrzyganie konfliktów na skrzyżowaniach na korzyść wyższego confidence, ignorowanie stanów pending/failed, obsługa odpowiedzi krótszych niż slot.
+   - `GridTrackerTest`: poprawne przeliczanie przesunięcia siatki na podstawie klatek z numerkami, wygładzanie, fallback przy braku dopasowań, resetowanie stanu.
+   - `AnswerTextTest`: odmiana liczby liter (`letterCountSuffix`) oraz formatowanie podsumowania dla haseł krzyżówki.
+   - `MainViewModelTest`: test podwajania i przywracania `stabilityMs` w trybie krzyżówki, test integracji siatki i liter w `UiState` przy emisji strony z krzyżówką.

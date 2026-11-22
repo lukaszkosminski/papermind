@@ -20,6 +20,11 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -41,6 +46,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.GridOff
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -249,6 +256,8 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
                 selectedId = state.selectedId,
                 bottomInsetPx = peekPx,
                 topInsetPx = topInsetPx,
+                grid = state.grid,
+                crosswordLetters = state.crosswordLetters,
                 modifier = Modifier.fillMaxSize(),
             )
             TopControls(
@@ -260,6 +269,7 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
                         controller.enableTorch(torchOn)
                     }
                 },
+                onToggleCrossword = viewModel::toggleCrosswordMode,
                 onFreeze = {
                     val bmp = if (state.frozen) null else previewView?.bitmap
                     viewModel.toggleFreeze(bmp)
@@ -269,6 +279,34 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
                 onSettings = onOpenSettings,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
+            AnimatedVisibility(
+                visible = state.crosswordMode,
+                enter = fadeIn() + slideInVertically { -it },
+                exit = fadeOut() + slideOutVertically { -it },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 58.dp, start = 16.dp, end = 16.dp),
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f),
+                    shadowElevation = 4.dp,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Default.GridOn, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Text(
+                            stringResource(R.string.crossword_hint),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -278,6 +316,7 @@ private fun TopControls(
     state: UiState,
     torchOn: Boolean,
     onTorch: () -> Unit,
+    onToggleCrossword: () -> Unit,
     onFreeze: () -> Unit,
     onClear: () -> Unit,
     onOutlines: () -> Unit,
@@ -301,6 +340,7 @@ private fun TopControls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ControlButton(onTorch, if (torchOn) Icons.Default.FlashOn else Icons.Default.FlashOff, R.string.cd_torch)
+            ControlButton(onToggleCrossword, if (state.crosswordMode) Icons.Default.GridOn else Icons.Default.GridOff, R.string.cd_crossword_mode)
             ControlButton(onFreeze, if (state.frozen) Icons.Default.PlayArrow else Icons.Default.Pause, if (state.frozen) R.string.cd_resume else R.string.cd_pause)
             ControlButton(onSettings, Icons.Default.Settings, R.string.cd_settings)
             Box {

@@ -54,4 +54,10 @@
     <string name="settings_language">Język odpowiedzi</string>
     <string name="settings_explanations">Pokazuj uzasadnienia</string>
     <string name="settings_stability">Czas stabilizacji obrazu: %1$d ms</string>
+
+    <string name="cd_crossword_mode">Tryb krzyżówki</string>
+    <string name="crossword_hint">Zmieść siatkę i hasła w kadrze; trzymaj nieruchomo</string>
+    <string name="panel_crossword_section">Krzyżówka</string>
+    <string name="crossword_across">Poziomo</string>
+    <string name="crossword_down">Pionowo</string>
 </resources>
