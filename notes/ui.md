@@ -72,3 +72,29 @@
 
 ## Ograniczenia
 - W trybie bez kamery/fizycznego urządzenia symulacja opiera się na `FakeOcrPipeline` generującym 5 przykładowych pytań i lekkie drżenie symulujące ruch ręki.
+
+## Runda poprawek
+
+Wykonano wszystkie punkty przypisane do roli `ui` z `briefs/fixes.md` na podstawie uwag z `notes/review.md`:
+
+1. **#6 (Cykl życia)**: W `CameraScreen.kt` zsynchronizowano wiązanie analizy kamery z cyklem życia (`ON_START` / `ON_STOP`). `LifecycleEventEffect` ustawia flagę `isStarted`, co gwarantuje odpięcie analizy (`unbindCamera`) przy przejściu aplikacji w tło i ponowne podpięcie przy powrocie, zapobiegając wyciekom i podwójnemu wiązaniu analizatora.
+2. **#7 (CameraX controller)**: W `CameraScreen.kt` skonfigurowano jednorazowo `LifecycleCameraController` wewnątrz `remember`:
+   - `imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST`
+   - `imageAnalysisResolutionSelector = ANALYSIS_RESOLUTION` (1080p 16:9 z zachowaniem proporcji; oznaczono TODO do docelowej synchronizacji z rozdzielczością OcrPipeline).
+3. **#9 (Frozen bitmap across rotation)**: W `UiState.kt` dodano pole `val frozenBitmap: Bitmap?`. `MainViewModel.toggleFreeze(bitmap)` zapisuje klatkę podglądu z `previewView?.bitmap` w stanie `UiState`, a `clear()` ją zeruje. Dzięki temu rotacja ekranu i rekompozycja nie powodują utraty zamrożonego obrazu.
+4. **#11 (Network Security Config)**: Usunięto globalne `android:usesCleartextTraffic="true"` z `AndroidManifest.xml` i dodano dedykowaną konfigurację `res/xml/network_security_config.xml`:
+   - Zablokowano nieszyfrowany ruch (`cleartextTrafficPermitted="false"`) dla zewnętrznych domen AI: `anthropic.com`, `googleapis.com`, `openai.com`.
+   - Zezwolono na cleartext dla `localhost`, `127.0.0.1`, `10.0.2.2`, `*.ts.net`.
+   - Zezwolono w `base-config` na połączenia nieszyfrowane z prywatnymi adresami IP serwera OpenCode w sieci lokalnej (LAN), z uwagi na brak obsługi masek CIDR w Android Network Security Config.
+5. **#12 (TopControls na 360 dp)**:
+   - `StatusChip` otrzymał `Modifier.weight(1f, fill = false)` oraz `maxLines = 1` z `TextOverflow.Ellipsis`.
+   - Rzadziej używane akcje (obrysy tekstu OCR oraz czyszczenie odpowiedzi) przeniesiono do menu overflow (`DropdownMenu` pod ikoną `MoreVert`). Na belce pozostały przyciski: latarka, pauza/wznowienie, ustawienia i menu więcej.
+6. **#13 (Cache TextLayoutResult dymków)**: W `AnswerOverlay.kt` dodano `layoutCache = remember { HashMap<String, TextLayoutResult>() }` kluczowany po szerokości i tekście. Tekst mierzony jest z bazowym kolorem, a pulsowanie i przezroczystości aplikowane są jako parametr `alpha` w `drawText`. Wyeliminowano re-measure tekstu przy każdej ze 120 klatek na sekundę.
+7. **#16 (Zabezpieczenie górnej krawędzi)**: W `BubblePlacement.kt` dodano parametr `safeTop: Float = 0f`. `AnswerOverlay` pobiera wysokość paska statusu przez `WindowInsets.statusBars` i przekazuje jako `topInsetPx`. Dymki odpowiedzi oraz ikona błędu w `AnswerOverlay` są ograniczane, aby nie wchodziły pod pasek stanu ani wycięcie aparatu.
+8. **#10 (trim w ustawieniach)**: W `SettingsScreen.kt` dodano `.trim()` przy zapisie `openCodeUrl`, `openCodeUser`, `openCodePassword`, `openCodeModel`, `cloudApiKey`, `cloudModel`, co eliminuje przypadkowe białe znaki wklejone z kluczem lub adresem URL.
+
+### Testy regresyjne:
+- `BubblePlacementTest.place_respectsSafeTopInset`: weryfikacja, że dymek przy górnej krawędzi jest pozycjonowany poniżej `safeTop + margin`.
+- `MainViewModelTest.freeze_managesFrozenBitmap_andClearsOnClear`: weryfikacja przechowywania bitmapy w `UiState.frozenBitmap` podczas wstrzymania oraz jej czyszczenia przy wznowieniu i `clear()`.
+- `SettingsSnapTest.textInputs_trimmedProperly`: weryfikacja trimowania wartości tekstowych.
+- Pełny zestaw testów jednostkowych projektu: zielony (`./gradlew assembleDebug testDebugUnitTest` zakończony sukcesem).

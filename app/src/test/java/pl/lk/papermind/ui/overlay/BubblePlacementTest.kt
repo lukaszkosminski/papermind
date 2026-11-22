@@ -93,4 +93,23 @@ class BubblePlacementTest {
         // above = 1400 - 5 - 80 = 1315
         assertEquals(1315f, pos.y, 0.001f)
     }
+
+    @Test
+    fun place_respectsSafeTopInset() {
+        val anchor = Box(100f, 20f, 400f, 60f)
+        val pos = BubblePlacement.place(
+            anchor = anchor,
+            w = 200f,
+            h = 80f,
+            viewW = 1080f,
+            viewH = 1920f,
+            margin = 10f,
+            gap = 5f,
+            safeTop = 120f,
+        )
+        // safeTop = 120f, margin = 10f -> topLimit = 130f
+        // below = 60 + 5 = 65, which is < 130f. It must clamp to at least topLimit (130f)
+        assertTrue("y should be at least topLimit", pos.y >= 130f)
+        assertEquals(130f, pos.y, 0.001f)
+    }
 }

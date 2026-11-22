@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -42,9 +43,11 @@ fun AnswerOverlay(
     showLineOutlines: Boolean,
     selectedId: String?,
     bottomInsetPx: Float,
+    topInsetPx: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
     val measurer = rememberTextMeasurer()
+    val layoutCache = remember { HashMap<String, TextLayoutResult>() }
     val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
         initialValue = 0.25f,
         targetValue = 1f,
@@ -60,7 +63,7 @@ fun AnswerOverlay(
             }
         }
         for (item in items) {
-            drawItem(item, item.question.id == selectedId, measurer, pulse, bottomInsetPx)
+            drawItem(item, item.question.id == selectedId, measurer, layoutCache, pulse, topInsetPx, bottomInsetPx)
         }
     }
 }
@@ -74,7 +77,9 @@ private fun DrawScope.drawItem(
     item: QuestionUi,
     selected: Boolean,
     measurer: TextMeasurer,
+    layoutCache: MutableMap<String, TextLayoutResult>,
     pulse: Float,
+    topInsetPx: Float,
     bottomInsetPx: Float,
 ) {
     val dp = density
@@ -93,7 +98,7 @@ private fun DrawScope.drawItem(
             )
         }
         is AnswerState.Failed -> if (qTracked != null) {
-            drawFailedIcon(qTracked.box, qTracked.alpha, measurer)
+            drawFailedIcon(qTracked.box, qTracked.alpha, measurer, layoutCache, topInsetPx, bottomInsetPx)
         }
         is AnswerState.Ready -> {
             val answer = state.answer
@@ -106,11 +111,11 @@ private fun DrawScope.drawItem(
                 }
                 // opcje poza kadrem, ale pytanie widoczne — pokaż skrót w dymku
                 if (!anyMarked && qTracked != null) {
-                    drawBubble(AnswerText.summary(item.question, answer), qTracked.box, qTracked.alpha, measurer, bottomInsetPx)
+                    drawBubble(AnswerText.summary(item.question, answer), qTracked.box, qTracked.alpha, measurer, layoutCache, topInsetPx, bottomInsetPx)
                 }
             } else if (qTracked != null) {
                 val text = AnswerText.summary(item.question, answer)
-                if (text.isNotBlank()) drawBubble(text, qTracked.box, qTracked.alpha, measurer, bottomInsetPx)
+                if (text.isNotBlank()) drawBubble(text, qTracked.box, qTracked.alpha, measurer, layoutCache, topInsetPx, bottomInsetPx)
             }
         }
     }
@@ -134,33 +139,82 @@ private fun DrawScope.drawCorrectOption(box: Box, alpha: Float) {
     drawPath(check, Color(0xFF06260F).copy(alpha = alpha), style = Stroke(2.4f * dp, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
 }
 
-private fun DrawScope.drawFailedIcon(box: Box, alpha: Float, measurer: TextMeasurer) {
+private fun DrawScope.drawFailedIcon(
+    box: Box,
+    alpha: Float,
+    measurer: TextMeasurer,
+    layoutCache: MutableMap<String, TextLayoutResult>,
+    topInsetPx: Float,
+    bottomInsetPx: Float,
+) {
     val r = 11 * density
-    val c = Offset(box.right.coerceAtMost(size.width - r - 4 * density), box.top - r * 0.2f)
+    val topLimit = topInsetPx + r + 4 * density
+    val bottomLimit = size.height - bottomInsetPx - r - 4 * density
+    val clampedY = (box.top - r * 0.2f).coerceIn(topLimit, maxOf(topLimit, bottomLimit))
+    val c = Offset(box.right.coerceIn(r + 4 * density, size.width - r - 4 * density), clampedY)
     drawCircle(OverlayColors.Failed.copy(alpha = alpha), r, c)
-    val layout = measurer.measure("!", TextStyle(color = Color.White.copy(alpha = alpha), fontSize = 15.sp, fontWeight = FontWeight.Bold))
-    drawText(layout, topLeft = Offset(c.x - layout.size.width / 2f, c.y - layout.size.height / 2f))
+    val layout = layoutCache.getOrPut("icon:!") {
+        measurer.measure(
+            text = "!",
+            style = TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold),
+        )
+    }
+    drawText(layout, topLeft = Offset(c.x - layout.size.width / 2f, c.y - layout.size.height / 2f), alpha = alpha)
 }
 
-private fun DrawScope.drawBubble(text: String, anchor: Box, alpha: Float, measurer: TextMeasurer, bottomInsetPx: Float) {
+private fun DrawScope.drawBubble(
+    text: String,
+    anchor: Box,
+    alpha: Float,
+    measurer: TextMeasurer,
+    layoutCache: MutableMap<String, TextLayoutResult>,
+    safeTopPx: Float,
+    bottomInsetPx: Float,
+) {
     val dp = density
     val pad = 10 * dp
     val maxTextWidth = (minOf(size.width * 0.8f, 360 * dp) - 2 * pad).toInt().coerceAtLeast(1)
-    val layout: TextLayoutResult = measurer.measure(
-        text = text,
-        style = TextStyle(color = OverlayColors.BubbleText.copy(alpha = alpha), fontSize = 16.sp, fontWeight = FontWeight.Medium, lineHeight = 21.sp),
-        overflow = TextOverflow.Ellipsis,
-        maxLines = 5,
-        constraints = Constraints(maxWidth = maxTextWidth),
-    )
+    val cacheKey = "$maxTextWidth:$text"
+    val layout: TextLayoutResult = layoutCache.getOrPut(cacheKey) {
+        measurer.measure(
+            text = text,
+            style = TextStyle(
+                color = OverlayColors.BubbleText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 21.sp,
+            ),
+            overflow = TextOverflow.Ellipsis,
+            maxLines = 5,
+            constraints = Constraints(maxWidth = maxTextWidth),
+        )
+    }
     val w = layout.size.width + 2 * pad
     val h = layout.size.height + 2 * pad
     val pos = BubblePlacement.place(
-        anchor = anchor, w = w, h = h, viewW = size.width, viewH = size.height,
-        margin = 8 * dp, gap = 6 * dp, safeBottom = size.height - bottomInsetPx,
+        anchor = anchor,
+        w = w,
+        h = h,
+        viewW = size.width,
+        viewH = size.height,
+        margin = 8 * dp,
+        gap = 6 * dp,
+        safeTop = safeTopPx,
+        safeBottom = size.height - bottomInsetPx,
     )
     val radius = CornerRadius(12 * dp)
-    drawRoundRect(OverlayColors.BubbleBackground.copy(alpha = OverlayColors.BubbleBackground.alpha * alpha), Offset(pos.x, pos.y), Size(w, h), radius)
-    drawRoundRect(OverlayColors.Correct.copy(alpha = 0.8f * alpha), Offset(pos.x, pos.y), Size(w, h), radius, style = Stroke(1.5f * dp))
-    drawText(layout, topLeft = Offset(pos.x + pad, pos.y + pad))
+    drawRoundRect(
+        OverlayColors.BubbleBackground.copy(alpha = OverlayColors.BubbleBackground.alpha * alpha),
+        Offset(pos.x, pos.y),
+        Size(w, h),
+        radius,
+    )
+    drawRoundRect(
+        OverlayColors.Correct.copy(alpha = 0.8f * alpha),
+        Offset(pos.x, pos.y),
+        Size(w, h),
+        radius,
+        style = Stroke(1.5f * dp),
+    )
+    drawText(layout, topLeft = Offset(pos.x + pad, pos.y + pad), alpha = alpha)
 }

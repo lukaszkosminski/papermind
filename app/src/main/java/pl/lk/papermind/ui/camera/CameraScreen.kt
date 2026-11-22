@@ -7,10 +7,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.util.Size
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
@@ -20,16 +25,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -38,6 +49,8 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +75,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -149,6 +163,14 @@ private fun PermissionScreen(onResult: (Boolean) -> Unit) {
     }
 }
 
+// TODO: docelowo pobierać z OcrPipeline, na razie 1080p 16:9
+private val ANALYSIS_RESOLUTION = ResolutionSelector.Builder()
+    .setResolutionStrategy(
+        ResolutionStrategy(Size(1920, 1080), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER),
+    )
+    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+    .build()
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSettings: () -> Unit) {
@@ -162,11 +184,12 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
             setEnabledUseCases(CameraController.IMAGE_ANALYSIS)
             isTapToFocusEnabled = true
             isPinchToZoomEnabled = true
+            imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+            imageAnalysisResolutionSelector = ANALYSIS_RESOLUTION
         }
     }
     val executor = remember { Executors.newSingleThreadExecutor() }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
-    var frozenFrame by remember { mutableStateOf<ImageBitmap?>(null) }
     var torchOn by rememberSaveable { mutableStateOf(false) }
 
     DisposableEffect(Unit) { onDispose { executor.shutdown() } }
@@ -176,8 +199,14 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
         onDispose { controller.unbind() }
     }
 
-    // Analiza OCR działa tylko gdy nie ma pauzy ani innego ekranu.
-    val analyzing = !state.frozen && !paused
+    var isStarted by remember {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { isStarted = true }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { isStarted = false }
+
+    // Analiza OCR działa tylko gdy nie ma pauzy, innego ekranu i aplikacja jest na pierwszym planie (ON_START..ON_STOP).
+    val analyzing = !state.frozen && !paused && isStarted
     DisposableEffect(controller, analyzing) {
         if (analyzing) viewModel.bindCamera(controller, executor)
         onDispose { if (analyzing) viewModel.unbindCamera(controller) }
@@ -216,15 +245,18 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
                     }
                 },
             )
-            frozenFrame?.let {
-                Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+            state.frozenBitmap?.let { bmp ->
+                val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
+                Image(imageBitmap, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
             }
+            val topInsetPx = with(density) { WindowInsets.statusBars.getTop(this).toFloat() }
             AnswerOverlay(
                 items = state.items,
                 lineBoxes = state.lineBoxes,
                 showLineOutlines = state.showLineOutlines,
                 selectedId = state.selectedId,
                 bottomInsetPx = peekPx,
+                topInsetPx = topInsetPx,
                 modifier = Modifier.fillMaxSize(),
             )
             TopControls(
@@ -237,8 +269,8 @@ private fun ScannerScreen(viewModel: MainViewModel, paused: Boolean, onOpenSetti
                     }
                 },
                 onFreeze = {
-                    frozenFrame = if (state.frozen) null else previewView?.bitmap?.asImageBitmap()
-                    viewModel.toggleFreeze()
+                    val bmp = if (state.frozen) null else previewView?.bitmap
+                    viewModel.toggleFreeze(bmp)
                 },
                 onClear = viewModel::clear,
                 onOutlines = viewModel::toggleLineOutlines,
@@ -260,25 +292,65 @@ private fun TopControls(
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Row(
-        modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        StatusChip(state)
+        StatusChip(state, modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.width(8.dp))
         Row(
             Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), RoundedCornerShape(28.dp)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ControlButton(onTorch, if (torchOn) Icons.Default.FlashOn else Icons.Default.FlashOff, R.string.cd_torch)
-            ControlButton(
-                onOutlines,
-                if (state.showLineOutlines) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                R.string.cd_outlines,
-            )
             ControlButton(onFreeze, if (state.frozen) Icons.Default.PlayArrow else Icons.Default.Pause, if (state.frozen) R.string.cd_resume else R.string.cd_pause)
-            ControlButton(onClear, Icons.Default.DeleteSweep, R.string.cd_clear)
             ControlButton(onSettings, Icons.Default.Settings, R.string.cd_settings)
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_more))
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (state.showLineOutlines) R.string.action_hide_outlines
+                                    else R.string.action_show_outlines,
+                                ),
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (state.showLineOutlines) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onOutlines()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.cd_clear)) },
+                        leadingIcon = {
+                            Icon(Icons.Default.DeleteSweep, contentDescription = null)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onClear()
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -291,10 +363,11 @@ private fun ControlButton(onClick: () -> Unit, icon: androidx.compose.ui.graphic
 }
 
 @Composable
-private fun StatusChip(state: UiState) {
+private fun StatusChip(state: UiState, modifier: Modifier = Modifier) {
     Surface(
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+        modifier = modifier,
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (state.status == ScanStatus.ANALYZING) {
@@ -310,6 +383,8 @@ private fun StatusChip(state: UiState) {
                     },
                 ),
                 style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

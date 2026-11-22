@@ -20,4 +20,12 @@ class SettingsSnapTest {
         assertEquals(2000L, snapStability(2100f))
         assertEquals(2000L, snapStability(5000f))
     }
+
+    @Test
+    fun textInputs_trimmedProperly() {
+        assertEquals("sk-test-key", "  sk-test-key \n".trim())
+        assertEquals("http://192.168.1.10:8080", " http://192.168.1.10:8080 ".trim())
+        assertEquals("gpt-4o", " gpt-4o".trim())
+        assertEquals("admin", "admin ".trim())
+    }
 }

@@ -54,6 +54,7 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val frozen = MutableStateFlow(false)
+    private val frozenBitmap = MutableStateFlow<android.graphics.Bitmap?>(null)
     private val selected = MutableStateFlow<String?>(null)
     private val currentPage = MutableStateFlow<ParsedPage?>(null)
     private val showLineOutlines = MutableStateFlow(false)
@@ -83,8 +84,8 @@ class MainViewModel(
 
     val uiState: StateFlow<UiState> = combine(
         content,
-        combine(selected, frozen, showLineOutlines, connection) { sel, fr, lines, conn ->
-            arrayOf<Any?>(sel, fr, lines, conn)
+        combine(selected, frozen, showLineOutlines, connection, frozenBitmap) { sel, fr, lines, conn, bmp ->
+            arrayOf(sel, fr, lines, conn, bmp)
         },
         settingsRepository.settings,
     ) { c, ctl, settings ->
@@ -100,6 +101,7 @@ class MainViewModel(
             connection = ctl[3] as ConnectionTest,
             status = statusOf(fr, c.items),
             activeEngine = active ?: settings.engine,
+            frozenBitmap = ctl[4] as? android.graphics.Bitmap,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
 
@@ -119,7 +121,13 @@ class MainViewModel(
 
     fun unbindCamera(controller: LifecycleCameraController) = ocr.unbind(controller)
 
-    fun toggleFreeze() = frozen.update { !it }
+    fun toggleFreeze(bitmap: android.graphics.Bitmap? = null) {
+        frozen.update { wasFrozen ->
+            val next = !wasFrozen
+            frozenBitmap.value = if (next) bitmap else null
+            next
+        }
+    }
 
     fun toggleLineOutlines() = showLineOutlines.update { !it }
 
@@ -131,6 +139,7 @@ class MainViewModel(
         ocr.reset()
         currentPage.value = null
         selected.value = null
+        frozenBitmap.value = null
         tracker.reset()
     }
 

@@ -227,6 +227,41 @@ class MainViewModelTest {
     }
 
     @Test
+    fun freeze_managesFrozenBitmap_andClearsOnClear() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        val job = launch { vm.uiState.collect {} }
+
+        advanceUntilIdle()
+
+        val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null) as sun.misc.Unsafe
+        val mockBitmap = unsafe.allocateInstance(android.graphics.Bitmap::class.java) as android.graphics.Bitmap
+
+        vm.toggleFreeze(mockBitmap)
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.frozen)
+        assertEquals(mockBitmap, vm.uiState.value.frozenBitmap)
+
+        // Resuming unfreezes and clears bitmap
+        vm.toggleFreeze()
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.frozen)
+        assertNull(vm.uiState.value.frozenBitmap)
+
+        // Freeze again with bitmap, then clear()
+        vm.toggleFreeze(mockBitmap)
+        advanceUntilIdle()
+        assertEquals(mockBitmap, vm.uiState.value.frozenBitmap)
+
+        vm.clear()
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.frozenBitmap)
+
+        job.cancel()
+    }
+
+    @Test
     fun clear_resetsState() = runTest(testDispatcher) {
         val vm = createViewModel()
         val job = launch { vm.uiState.collect {} }
