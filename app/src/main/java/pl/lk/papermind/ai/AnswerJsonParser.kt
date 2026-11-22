@@ -67,7 +67,7 @@ object AnswerJsonParser {
     }
 
     private fun toAnswer(e: JsonObject, q: DetectedQuestion, engine: EngineId): Answer {
-        var text = e.string("text") ?: e.string("answer") ?: ""
+        var text = e.string("text") ?: e.string("answer") ?: e.string("word") ?: ""
         val labels = normalizeLabels(e["options"] ?: e["answer_options"], q)
         val choice = q.type == QuestionType.SINGLE_CHOICE || q.type == QuestionType.MULTI_CHOICE
         val finalLabels = if (q.type == QuestionType.SINGLE_CHOICE) labels.take(1) else labels

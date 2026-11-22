@@ -108,8 +108,10 @@ class AnswerServiceImpl(
             if (toSend.isEmpty()) return
 
             val myEpoch = epoch
+            // Krzyżówka: całe hasła naraz; odpowiedzi znane z cache służą solverowi (wzorce liter, konflikty)
+            val known = questions.filter(CrosswordSolver::isClue).mapNotNull { q -> cache[q.id]?.let { q.id to it.answer } }.toMap()
             val sub = page.copy(questions = toSend)
-            val job = scope.launch(start = CoroutineStart.LAZY) { process(myEpoch, sub, toSend) }
+            val job = scope.launch(start = CoroutineStart.LAZY) { process(myEpoch, sub, toSend, known, questions.filter(CrosswordSolver::isClue)) }
             toSend.forEach { inFlight[it.id] = job }
             job.invokeOnCompletion {
                 synchronized(lock) { inFlight.entries.removeAll { it.value === job } }
@@ -131,21 +133,28 @@ class AnswerServiceImpl(
         }
     }
 
-    private suspend fun process(myEpoch: Int, page: ParsedPage, questions: List<DetectedQuestion>) {
+    private suspend fun process(myEpoch: Int, page: ParsedPage, questions: List<DetectedQuestion>, initialKnown: Map<String, Answer>, pageClues: List<DetectedQuestion>) {
         val settings = settingsRepository.settings.first()
         val remaining = LinkedHashMap(questions.associateBy { it.id })
         val errors = ArrayList<String>()
+        val known = HashMap(initialKnown)
         for (engine in orderedEngines(settings)) {
             if (remaining.isEmpty()) break
             val name = engineName(engine.id)
-            val limit = timeouts[engine.id] ?: DEFAULT_TIMEOUT_MS
+            val hasClues = remaining.values.any(CrosswordSolver::isClue)
+            val limit = (timeouts[engine.id] ?: DEFAULT_TIMEOUT_MS) * (if (hasClues) CROSSWORD_TIMEOUT_FACTOR else 1)
             try {
                 val available = withTimeoutOrNull(AVAILABILITY_TIMEOUT_MS) { engine.isAvailable() }
                 if (available != true) {
                     errors += if (available == null) "$name: brak odpowiedzi (sprawdzanie dostępności)" else "$name: niedostępny"
                     continue
                 }
-                val result = withTimeoutOrNull(limit) { engine.answer(page.copy(questions = remaining.values.toList())) }
+                val result = withTimeoutOrNull(limit) {
+                    val targets = CrosswordSolver.withPatterns(remaining.values.toList(), pageClues, known, page.grid)
+                    val req = page.copy(questions = targets)
+                    val first = engine.answer(req)
+                    if (hasClues) CrosswordSolver.solve(req, known, first, pageClues) { engine.answer(it) } else first
+                }
                 if (result == null) {
                     errors += "$name: przekroczono czas oczekiwania (${limit / 1000} s)"
                     continue
@@ -154,6 +163,7 @@ class AnswerServiceImpl(
                 if (valid.isEmpty()) errors += "$name: brak użytecznej odpowiedzi"
                 for (a in valid) {
                     val q = remaining.remove(a.questionId) ?: continue
+                    if (CrosswordSolver.isClue(q)) known[q.id] = a
                     publishReady(myEpoch, q, a)
                 }
             } catch (e: CancellationException) {
@@ -186,7 +196,7 @@ class AnswerServiceImpl(
 
     /** Pytanie bez trafienia po id, ale o niemal identycznej treści i opcjach (szum OCR zmienił hash id). */
     private fun fuzzyLookup(q: DetectedQuestion): Cached? {
-        if (q.id == PAGE_QUESTION_ID) return null
+        if (q.id == PAGE_QUESTION_ID || q.type == QuestionType.CROSSWORD_CLUE) return null // hasła krzyżówki: id zawiera numer+treść
         val labels = labels(q)
         var best: Cached? = null
         var bestScore = FUZZY_THRESHOLD
@@ -232,6 +242,8 @@ class AnswerServiceImpl(
         const val DEFAULT_TIMEOUT_MS = 30_000L
         const val AVAILABILITY_TIMEOUT_MS = 8_000L
         const val FUZZY_THRESHOLD = 0.85
+        /** Krzyżówka = więcej haseł + druga runda poprawkowa, więc limit czasu na silnik ×2. */
+        const val CROSSWORD_TIMEOUT_FACTOR = 2
         val DEFAULT_TIMEOUTS_MS = mapOf(
             EngineId.GEMINI_NANO to 20_000L,
             EngineId.OPENCODE to 45_000L,
