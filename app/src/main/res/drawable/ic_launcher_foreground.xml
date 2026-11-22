@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- kartka -->
+    <path
+        android:fillColor="#F2F4F7"
+        android:pathData="M34,28h28l12,12v40a4,4 0,0 1,-4,4H34a4,4 0,0 1,-4,-4V32a4,4 0,0 1,4,-4z" />
+    <path
+        android:fillColor="#C9CED6"
+        android:pathData="M62,28l12,12H66a4,4 0,0 1,-4,-4z" />
+    <!-- linie tekstu -->
+    <path
+        android:fillColor="#9AA3AF"
+        android:pathData="M38,46h22v3H38zM38,54h28v3H38z" />
+    <!-- zielony ptaszek -->
+    <path
+        android:strokeColor="#39D98A"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M40,70l8,8l16,-16" />
+</vector>
