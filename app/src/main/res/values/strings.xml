@@ -1,3 +1,54 @@
 <resources>
     <string name="app_name">PaperMind</string>
+
+    <string name="permission_title">Dostęp do kamery</string>
+    <string name="permission_rationale">PaperMind patrzy kamerą na test lub formularz, rozpoznaje pytania i pokazuje odpowiedzi na podglądzie. Obraz jest analizowany na urządzeniu.</string>
+    <string name="permission_denied">Dostęp do kamery został zablokowany. Włącz go w ustawieniach aplikacji, aby skanować dokumenty.</string>
+    <string name="permission_grant">Zezwól na kamerę</string>
+    <string name="permission_open_settings">Otwórz ustawienia aplikacji</string>
+
+    <string name="engine_nano">Gemini Nano</string>
+    <string name="engine_opencode">OpenCode</string>
+    <string name="engine_cloud">Chmura</string>
+
+    <string name="status_scanning">szukam pytań…</string>
+    <string name="status_analyzing">analizuję…</string>
+    <string name="status_done">gotowe</string>
+    <string name="status_frozen">wstrzymano</string>
+
+    <string name="cd_torch">Latarka</string>
+    <string name="cd_outlines">Obrysy tekstu</string>
+    <string name="cd_pause">Wstrzymaj analizę</string>
+    <string name="cd_resume">Wznów analizę</string>
+    <string name="cd_clear">Wyczyść odpowiedzi</string>
+    <string name="cd_settings">Ustawienia</string>
+    <string name="cd_back">Wstecz</string>
+    <string name="cd_show_secret">Pokaż / ukryj</string>
+
+    <string name="panel_empty">Skieruj kamerę na test</string>
+    <string name="panel_title">Odpowiedzi %1$d/%2$d</string>
+    <string name="panel_pending">Analizuję…</string>
+    <string name="panel_failed">Błąd: %1$s</string>
+    <string name="panel_meta">%1$s · pewność %2$d%%</string>
+
+    <string name="settings_title">Ustawienia</string>
+    <string name="settings_engine">Silnik AI</string>
+    <string name="settings_fallback">Przełącz na inny silnik, gdy wybrany jest niedostępny</string>
+    <string name="settings_test_connection">Testuj połączenie</string>
+    <string name="settings_test_ok">Dostępny ✓</string>
+    <string name="settings_test_fail">Niedostępny</string>
+    <string name="settings_opencode">Serwer OpenCode</string>
+    <string name="settings_opencode_url">Adres URL</string>
+    <string name="settings_opencode_user">Login</string>
+    <string name="settings_opencode_password">Hasło</string>
+    <string name="settings_opencode_model">Model</string>
+    <string name="settings_model_hint">provider/model, puste = domyślny serwera</string>
+    <string name="settings_model_default_hint">puste = domyślny dostawcy</string>
+    <string name="settings_cloud">Chmura</string>
+    <string name="settings_cloud_key">Klucz API</string>
+    <string name="settings_cloud_model">Model</string>
+    <string name="settings_behavior">Zachowanie</string>
+    <string name="settings_language">Język odpowiedzi</string>
+    <string name="settings_explanations">Pokazuj uzasadnienia</string>
+    <string name="settings_stability">Czas stabilizacji obrazu: %1$d ms</string>
 </resources>
