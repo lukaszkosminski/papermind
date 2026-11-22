@@ -165,4 +165,48 @@ class OpenCodeEngineTest {
         assertEquals(null, OpenCodeEngine.parseModel(""))
         assertEquals(null, OpenCodeEngine.parseModel("nomodel"))
     }
+
+    // --- krzyżówki: zdjęcie ---
+    private val jpeg = byteArrayOf(9, 8, 7)
+    private val dataUri get() = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(jpeg)
+    private val cwPage get() = Cw.page(jpeg = jpeg).let { it.copy(questions = it.questions.take(1)) }
+    private val cwJson = """{"answers":[{"id":"Q1","text":"KOTEK","confidence":0.9}]}"""
+
+    @Test fun v2AttachesImageAsFile() = runTest {
+        start { r, key -> if (key == "GET /api/session/ses_1/message") ok("""{"data":[{"type":"assistant","content":[{"type":"text","text":${jstr(cwJson)}}]}]}""") else v2Handler(r, key) }
+        val r = engine().answer(cwPage)
+        assertEquals("KOTEK", r.single().text)
+        val files = Json.parseToJsonElement(bodies["POST /api/session/ses_1/prompt"]!!).jsonObject["files"]!!.jsonArray
+        assertEquals(dataUri, files[0].jsonObject["uri"]!!.jsonPrimitive.content)
+        assertTrue(Json.parseToJsonElement(bodies["POST /api/session/ses_1/prompt"]!!).jsonObject["text"]!!.jsonPrimitive.content.contains("photo of the page is attached"))
+    }
+
+    @Test fun legacyAttachesImageAsFilePart() = runTest {
+        start { r, key ->
+            if (key == "POST /session/ses_L/message") ok("""{"info":{},"parts":[{"type":"text","text":${jstr(cwJson)}}]}""") else legacyHandler(r, key)
+        }
+        engine().answer(cwPage)
+        val parts = Json.parseToJsonElement(bodies["POST /session/ses_L/message"]!!).jsonObject["parts"]!!.jsonArray
+        val file = parts.map { it.jsonObject }.first { it["type"]!!.jsonPrimitive.content == "file" }
+        assertEquals("image/jpeg", file["mime"]!!.jsonPrimitive.content)
+        assertEquals(dataUri, file["url"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun fallsBackToTextOnlyWhenModelCannotReadImage() = runTest {
+        var n = 0
+        start { r, key ->
+            if (key == "POST /session/ses_L/message") {
+                n++
+                if (n == 1) ok("""{"info":{},"parts":[{"type":"text","text":"I can't view the image - this model does not support image input."}]}""")
+                else ok("""{"info":{},"parts":[{"type":"text","text":${jstr(cwJson)}}]}""")
+            } else legacyHandler(r, key)
+        }
+        val r = engine().answer(cwPage)
+        assertEquals("KOTEK", r.single().text)
+        assertEquals(2, n)
+        assertEquals(2, seen.count { it == "POST /session" }) // druga próba w nowej sesji
+        val parts = Json.parseToJsonElement(bodies["POST /session/ses_L/message"]!!).jsonObject["parts"]!!.jsonArray
+        assertTrue(parts.none { it.jsonObject["type"]!!.jsonPrimitive.content == "file" })
+        assertFalse(bodies["POST /session/ses_L/message"]!!.contains("photo of the page is attached"))
+    }
 }

@@ -24,6 +24,7 @@ import pl.lk.papermind.model.ParsedPage
 import pl.lk.papermind.settings.AppSettings
 import pl.lk.papermind.settings.CloudProvider
 import java.io.IOException
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /** Cloud: Anthropic Messages API / Gemini generateContent / OpenAI Chat Completions (JSON mode). */
@@ -64,7 +65,7 @@ class CloudEngine(
         try {
             val prompt = PromptBuilder.build(page, s.language)
             val model = s.cloudModel.ifBlank { defaultModel(s.cloudProvider) }
-            val request = buildRequest(s, model, prompt)
+            val request = buildRequest(s, model, prompt, page.snapshotJpeg)
             val result = client.newCall(request).await()
             if (!result.ok) throw EngineException("$label: HTTP ${result.code} ${errorMessage(result.body)}".trim())
             val text = withContext(Dispatchers.Default) { extractText(s.cloudProvider, result.body) }
@@ -97,10 +98,11 @@ class CloudEngine(
         }
     }
 
-    internal fun buildRequest(s0: AppSettings, model: String, prompt: Prompt): Request {
+    internal fun buildRequest(s0: AppSettings, model: String, prompt: Prompt, imageJpeg: ByteArray? = null): Request {
         val s = s0.sanitized()
         val base = (baseUrls[s.cloudProvider] ?: DEFAULT_BASE_URLS.getValue(s.cloudProvider)).trimEnd('/')
         val media = "application/json".toMediaType()
+        val image = imageJpeg?.takeIf { it.isNotEmpty() }?.let { Base64.getEncoder().encodeToString(it) }
         return when (s.cloudProvider) {
             CloudProvider.ANTHROPIC -> {
                 val body = buildJsonObject {
@@ -109,7 +111,18 @@ class CloudEngine(
                     put("temperature", 0)
                     put("system", prompt.system)
                     putJsonArray("messages") {
-                        add(buildJsonObject { put("role", "user"); put("content", prompt.user) })
+                        add(buildJsonObject {
+                            put("role", "user")
+                            if (image == null) put("content", prompt.user) else putJsonArray("content") {
+                                add(buildJsonObject {
+                                    put("type", "image")
+                                    putJsonObject("source") {
+                                        put("type", "base64"); put("media_type", "image/jpeg"); put("data", image)
+                                    }
+                                })
+                                add(buildJsonObject { put("type", "text"); put("text", prompt.user) })
+                            }
+                        })
                     }
                 }
                 Request.Builder().url("$base/v1/messages")
@@ -125,7 +138,12 @@ class CloudEngine(
                     putJsonArray("contents") {
                         add(buildJsonObject {
                             put("role", "user")
-                            putJsonArray("parts") { add(buildJsonObject { put("text", prompt.user) }) }
+                            putJsonArray("parts") {
+                                if (image != null) add(buildJsonObject {
+                                    putJsonObject("inline_data") { put("mime_type", "image/jpeg"); put("data", image) }
+                                })
+                                add(buildJsonObject { put("text", prompt.user) })
+                            }
                         })
                     }
                     putJsonObject("generationConfig") {
@@ -144,7 +162,16 @@ class CloudEngine(
                     putJsonObject("response_format") { put("type", "json_object") }
                     putJsonArray("messages") {
                         add(buildJsonObject { put("role", "system"); put("content", prompt.system) })
-                        add(buildJsonObject { put("role", "user"); put("content", prompt.user) })
+                        add(buildJsonObject {
+                            put("role", "user")
+                            if (image == null) put("content", prompt.user) else putJsonArray("content") {
+                                add(buildJsonObject { put("type", "text"); put("text", prompt.user) })
+                                add(buildJsonObject {
+                                    put("type", "image_url")
+                                    putJsonObject("image_url") { put("url", "data:image/jpeg;base64,$image") }
+                                })
+                            }
+                        })
                     }
                 }
                 Request.Builder().url("$base/v1/chat/completions")
@@ -157,7 +184,7 @@ class CloudEngine(
     companion object {
         const val AVAILABILITY_TTL_MS = 60_000L
         const val ANTHROPIC_VERSION = "2023-06-01"
-        const val MAX_OUTPUT_TOKENS = 2048
+        const val MAX_OUTPUT_TOKENS = 4096
         val DEFAULT_BASE_URLS = mapOf(
             CloudProvider.ANTHROPIC to "https://api.anthropic.com",
             CloudProvider.GEMINI to "https://generativelanguage.googleapis.com",

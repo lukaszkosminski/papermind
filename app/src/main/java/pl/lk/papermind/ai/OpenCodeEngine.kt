@@ -76,12 +76,26 @@ class OpenCodeEngine(
         return null
     }
 
+    /**
+     * Ze zdjęciem (krzyżówki): pierwsza próba z załącznikiem; gdy model nie obsługuje obrazów (OpenCode odpowiada
+     * wtedy prozą / błędem) — druga próba w nowej sesji, tylko tekst.
+     */
     override suspend fun answer(page: ParsedPage): List<Answer> = lock.withLock {
         val s = settings.first().sanitized()
         if (s.openCodeUrl.isBlank()) throw EngineException("Nie ustawiono adresu serwera OpenCode")
+        val image = page.snapshotJpeg?.takeIf { it.isNotEmpty() }
+        if (image != null) {
+            val withImage = try { run(s, page, image) } catch (e: EngineException) { emptyList() }
+            if (withImage.isNotEmpty()) return@withLock withImage
+            dropSession(s)
+        }
+        run(s, page.copy(snapshotJpeg = null), null)
+    }
+
+    private suspend fun run(s: AppSettings, page: ParsedPage, image: ByteArray?): List<Answer> {
         val prompt = PromptBuilder.build(page, s.language)
         val text = try {
-            withSession(s) { st -> prompt(s, st, prompt.combined) }
+            withSession(s) { st -> prompt(s, st, prompt.combined, image) }
         } catch (e: CancellationException) {
             // zapytanie mogło zostać w sesji — nie używaj jej ponownie
             dropSession(s)
@@ -100,7 +114,7 @@ class OpenCodeEngine(
             throw EngineException("OpenCode: ${e.message ?: e.javaClass.simpleName}", e)
         }
         if (text.isBlank()) throw EngineException("OpenCode: pusta odpowiedź modelu")
-        AnswerJsonParser.parse(text, page.questions, id)
+        return AnswerJsonParser.parse(text, page.questions, id)
     }
 
     private suspend fun <T> withSession(s: AppSettings, block: suspend (SessionState) -> T): T {
@@ -133,11 +147,17 @@ class OpenCodeEngine(
         return SessionState(key, api, sid ?: throw EngineException("OpenCode: brak id sesji w odpowiedzi"))
     }
 
-    private suspend fun prompt(s: AppSettings, st: SessionState, text: String): String = when (st.api) {
+    private suspend fun prompt(s: AppSettings, st: SessionState, text: String, image: ByteArray? = null): String = when (st.api) {
+        // Uwaga: `image` jako data URI (base64 JPEG)
         Api.LEGACY -> {
             val model = parseModel(s.openCodeModel)
             val body = buildJsonObject {
-                putJsonArray("parts") { add(buildJsonObject { put("type", "text"); put("text", text) }) }
+                putJsonArray("parts") {
+                    add(buildJsonObject { put("type", "text"); put("text", text) })
+                    if (image != null) add(buildJsonObject {
+                        put("type", "file"); put("mime", "image/jpeg"); put("filename", "page.jpg"); put("url", dataUri(image))
+                    })
+                }
                 if (model != null) putJsonObject("model") { put("providerID", model.first); put("modelID", model.second) }
             }
             val res = post(s, "/session/${st.id}/message", body.toString())
@@ -150,7 +170,13 @@ class OpenCodeEngine(
                 .filter { it.str("type") == "text" }.joinToString("") { it.str("text").orEmpty() }
         }
         Api.V2 -> {
-            val sent = post(s, "/api/session/${st.id}/prompt", buildJsonObject { put("text", text) }.toString())
+            val body = buildJsonObject {
+                put("text", text)
+                if (image != null) putJsonArray("files") {
+                    add(buildJsonObject { put("uri", dataUri(image)); put("name", "page.jpg") })
+                }
+            }
+            val sent = post(s, "/api/session/${st.id}/prompt", body.toString())
             checkOk(sent, "wysłanie promptu")
             val wait = post(s, "/api/experimental/session/${st.id}/wait", "{}")
             checkOk(wait, "oczekiwanie na odpowiedź")
@@ -204,6 +230,7 @@ class OpenCodeEngine(
 
     companion object {
         const val MAX_SESSION_USES = 20
+        private fun dataUri(jpeg: ByteArray) = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(jpeg)
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
         fun defaultClient(): OkHttpClient = Http.sharedClient.newBuilder()

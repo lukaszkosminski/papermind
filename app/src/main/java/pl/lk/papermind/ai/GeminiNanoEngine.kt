@@ -5,6 +5,7 @@ import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
+import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.SystemInstruction
 import com.google.mlkit.genai.prompt.TextPart
@@ -67,32 +68,57 @@ class GeminiNanoEngine(
         val m = client()
         val language = settings?.first()?.language
         val tokenLimit = runCatching { m.getTokenLimit() }.getOrNull()
-        val prompt = PromptBuilder.build(page, language, compact = true, maxRawChars = rawBudget(page, tokenLimit))
-        val request = GenerateContentRequest.Builder(SystemInstruction(prompt.system), TextPart(prompt.user)).apply {
-            temperature = 0f
-            candidateCount = 1
-            maxOutputTokens = MAX_OUTPUT_TOKENS
-        }.build()
+        val image = page.snapshotJpeg?.takeIf { it.isNotEmpty() }
+        // Zdjęcie (krzyżówki): Nano jest multimodalne (ImagePart), ale kosztuje tokeny kontekstu i bywa
+        // niedostępne na urządzeniu — przy błędzie powtarzamy tylko z tekstem.
+        val withImage = image?.let { generate(m, page, language, tokenLimit, it) }
+        if (!withImage.isNullOrEmpty()) return@withLock withImage
+        generate(m, page.copy(snapshotJpeg = null), language, tokenLimit, null) ?: throw EngineException("Gemini Nano zwrócił pustą odpowiedź")
+    }
+
+    /** null gdy próba ze zdjęciem się nie powiodła (wyjątek). Bez zdjęcia wyjątki są propagowane. */
+    private suspend fun generate(
+        m: GenerativeModel, page: ParsedPage, language: String?, tokenLimit: Int?, image: ByteArray?,
+    ): List<Answer>? {
+        val prompt = PromptBuilder.build(page, language, compact = true, maxRawChars = rawBudget(page, tokenLimit, image != null))
+        val request = try {
+            val builder = if (image != null) {
+                GenerateContentRequest.Builder(SystemInstruction(prompt.system), ImagePart(image), TextPart(prompt.user))
+            } else {
+                GenerateContentRequest.Builder(SystemInstruction(prompt.system), TextPart(prompt.user))
+            }
+            builder.apply {
+                temperature = 0f
+                candidateCount = 1
+                maxOutputTokens = MAX_OUTPUT_TOKENS
+            }.build()
+        } catch (e: Exception) {
+            if (image != null) return null
+            throw EngineException("Gemini Nano: ${e.message ?: e.javaClass.simpleName}", e)
+        }
         val text = try {
             m.generateContent(request).candidates.firstOrNull()?.text
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (image != null) return null
             throw EngineException("Gemini Nano: ${e.message ?: e.javaClass.simpleName}", e)
-        } ?: throw EngineException("Gemini Nano zwrócił pustą odpowiedź")
-        AnswerJsonParser.parse(text, page.questions, id)
+        }
+        if (text == null) return if (image != null) null else throw EngineException("Gemini Nano zwrócił pustą odpowiedź")
+        return AnswerJsonParser.parse(text, page.questions, id)
     }
 
     internal companion object {
         const val MAX_OUTPUT_TOKENS = 1024
         private const val DEFAULT_TOKEN_LIMIT = 4000
         private const val CHARS_PER_TOKEN = 3
+        private const val IMAGE_TOKENS = 600 // zapas na zdjęcie w kontekście
 
         /** Ile znaków surowego tekstu zmieści się obok instrukcji, pytań i miejsca na odpowiedź. */
-        fun rawBudget(page: ParsedPage, tokenLimit: Int?): Int {
+        fun rawBudget(page: ParsedPage, tokenLimit: Int?, withImage: Boolean = false): Int {
             val limit = tokenLimit ?: DEFAULT_TOKEN_LIMIT
             val questionChars = page.questions.sumOf { q -> q.text.length + q.options.sumOf { it.text.length + 6 } + 40 }
-            val usedTokens = 700 + MAX_OUTPUT_TOKENS / 2 + questionChars / CHARS_PER_TOKEN
+            val usedTokens = 700 + MAX_OUTPUT_TOKENS / 2 + questionChars / CHARS_PER_TOKEN + (if (withImage) IMAGE_TOKENS else 0)
             return ((limit - usedTokens) * CHARS_PER_TOKEN).coerceIn(0, 6000)
         }
     }

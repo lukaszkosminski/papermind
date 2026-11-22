@@ -382,4 +382,81 @@ class AnswerServiceImplTest {
         advanceUntilIdle()
         assertEquals(2, cloud.calls.size)
     }
+
+    // --- krzyżówki ---
+    private fun cwRespond(vararg wrong: Pair<String, String>): (ParsedPage) -> List<Answer> {
+        val w = wrong.toMap()
+        return { p ->
+            p.questions.map { q ->
+                val key = (if (q.clue!!.direction == pl.lk.papermind.model.Direction.ACROSS) "A" else "D") + q.clue!!.number
+                Cw.ans(key, w[key] ?: Cw.solution.getValue(key), conf = if (key in w) 0.4f else 0.9f)
+            }
+        }
+    }
+
+    @Test fun `krzyzowka - cala krzyzowka jednym zapytaniem`() = runTest {
+        val cloud = FakeEngine(EngineId.CLOUD, respond = cwRespond())
+        val s = service(cloud)
+        s.submit(Cw.page())
+        advanceUntilIdle()
+        assertEquals(1, cloud.calls.size)
+        assertEquals(6, cloud.calls[0].size)
+        assertTrue(s.current().values.all { it is AnswerState.Ready })
+    }
+
+    @Test fun `krzyzowka - konflikt wywoluje druga runde tylko dla konfliktowego hasla`() = runTest {
+        var round = 0
+        val cloud = FakeEngine(EngineId.CLOUD, respond = { p ->
+            round++
+            if (round == 1) cwRespond("D2" to "TAXAM")(p) else cwRespond()(p)
+        })
+        val s = service(cloud)
+        s.submit(Cw.page())
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
+        assertEquals(listOf("idD2"), cloud.calls[1])
+        assertEquals("TASAM", (s.current()["idD2"] as AnswerState.Ready).answer.text)
+    }
+
+    @Test fun `krzyzowka - znane odpowiedzi z cache daja wzorzec nowym haslom`() = runTest {
+        val seenPatterns = ArrayList<String?>()
+        val cloud = FakeEngine(EngineId.CLOUD, respond = { p ->
+            p.questions.forEach { seenPatterns += it.clue?.pattern }
+            cwRespond()(p)
+        })
+        val s = service(cloud)
+        val all = Cw.clues()
+        s.submit(Cw.page().copy(questions = all.filter { it.id != "idD2" }))
+        advanceUntilIdle()
+        seenPatterns.clear()
+        s.submit(Cw.page())
+        advanceUntilIdle()
+        assertEquals(listOf(listOf("idD2")), cloud.calls.drop(1))
+        assertEquals(listOf<String?>("T_S_M"), seenPatterns)
+    }
+
+    @Test fun `krzyzowka - timeout silnika jest podwojony`() = runTest {
+        val hung = FakeEngine(EngineId.OPENCODE, gate = CompletableDeferred())
+        val cloud = FakeEngine(EngineId.CLOUD, respond = cwRespond())
+        val s = service(hung, cloud, settings = AppSettings(engine = EngineId.OPENCODE),
+            timeouts = mapOf(EngineId.OPENCODE to 10_000L, EngineId.CLOUD to 10_000L))
+        s.submit(Cw.page())
+        runCurrent()
+        advanceTimeBy(15_000)
+        assertTrue(s.current().values.all { it is AnswerState.Pending }) // zwykły limit 10 s już minął
+        advanceTimeBy(6_000)
+        runCurrent()
+        assertTrue(s.current().values.all { it is AnswerState.Ready })
+    }
+
+    @Test fun `krzyzowka - hasla nie sa dopasowywane rozmytym cache`() = runTest {
+        val cloud = FakeEngine(EngineId.CLOUD, respond = cwRespond())
+        val s = service(cloud)
+        s.submit(Cw.page())
+        advanceUntilIdle()
+        val noisy = Cw.clues().map { it.copy(id = it.id + "x") }
+        s.submit(Cw.page().copy(questions = noisy))
+        advanceUntilIdle()
+        assertEquals(2, cloud.calls.size)
+    }
 }
