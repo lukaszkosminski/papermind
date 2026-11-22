@@ -22,6 +22,9 @@
     <string name="cd_resume">Wznów analizę</string>
     <string name="cd_clear">Wyczyść odpowiedzi</string>
     <string name="cd_settings">Ustawienia</string>
+    <string name="cd_more">Więcej opcji</string>
+    <string name="action_show_outlines">Pokaż obrysy tekstu OCR</string>
+    <string name="action_hide_outlines">Ukryj obrysy tekstu OCR</string>
     <string name="cd_back">Wstecz</string>
     <string name="cd_show_secret">Pokaż / ukryj</string>
 

@@ -103,10 +103,10 @@ fun SettingsScreen(
             }
 
             Section(R.string.settings_opencode) {
-                TextSetting(R.string.settings_opencode_url, settings.openCodeUrl, keyboardType = KeyboardType.Uri) { v -> onUpdate { it.copy(openCodeUrl = v) } }
-                TextSetting(R.string.settings_opencode_user, settings.openCodeUser) { v -> onUpdate { it.copy(openCodeUser = v) } }
-                TextSetting(R.string.settings_opencode_password, settings.openCodePassword, secret = true) { v -> onUpdate { it.copy(openCodePassword = v) } }
-                TextSetting(R.string.settings_opencode_model, settings.openCodeModel, hint = R.string.settings_model_hint) { v -> onUpdate { it.copy(openCodeModel = v) } }
+                TextSetting(R.string.settings_opencode_url, settings.openCodeUrl, keyboardType = KeyboardType.Uri) { v -> onUpdate { it.copy(openCodeUrl = v.trim()) } }
+                TextSetting(R.string.settings_opencode_user, settings.openCodeUser) { v -> onUpdate { it.copy(openCodeUser = v.trim()) } }
+                TextSetting(R.string.settings_opencode_password, settings.openCodePassword, secret = true) { v -> onUpdate { it.copy(openCodePassword = v.trim()) } }
+                TextSetting(R.string.settings_opencode_model, settings.openCodeModel, hint = R.string.settings_model_hint) { v -> onUpdate { it.copy(openCodeModel = v.trim()) } }
             }
 
             Section(R.string.settings_cloud) {
@@ -119,8 +119,8 @@ fun SettingsScreen(
                         )
                     }
                 }
-                TextSetting(R.string.settings_cloud_key, settings.cloudApiKey, secret = true) { v -> onUpdate { it.copy(cloudApiKey = v) } }
-                TextSetting(R.string.settings_cloud_model, settings.cloudModel, hint = R.string.settings_model_default_hint) { v -> onUpdate { it.copy(cloudModel = v) } }
+                TextSetting(R.string.settings_cloud_key, settings.cloudApiKey, secret = true) { v -> onUpdate { it.copy(cloudApiKey = v.trim()) } }
+                TextSetting(R.string.settings_cloud_model, settings.cloudModel, hint = R.string.settings_model_default_hint) { v -> onUpdate { it.copy(cloudModel = v.trim()) } }
             }
 
             Section(R.string.settings_behavior) {

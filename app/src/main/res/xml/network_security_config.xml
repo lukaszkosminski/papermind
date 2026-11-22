@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Blokada nieszyfrowanego ruchu (cleartext HTTP) dla zewnętrznych dostawców AI w chmurze -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">anthropic.com</domain>
+        <domain includeSubdomains="true">googleapis.com</domain>
+        <domain includeSubdomains="true">openai.com</domain>
+    </domain-config>
+
+    <!-- Dozwolony ruch cleartext dla lokalnego dewelopmentu i Tailscale -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">ts.net</domain>
+    </domain-config>
+
+    <!-- Domyślna konfiguracja: zezwala na cleartext dla prywatnych adresów IP serwera OpenCode w sieci lokalnej (LAN),
+         ponieważ Android Network Security Config nie obsługuje masek CIDR w domain-config. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

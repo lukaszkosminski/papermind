@@ -34,4 +34,6 @@ data class UiState(
     val status: ScanStatus = ScanStatus.SCANNING,
     /** Silnik, który faktycznie odpowiedział (z fallbacku), a bez odpowiedzi — wybrany w ustawieniach. */
     val activeEngine: EngineId = EngineId.GEMINI_NANO,
+    /** Klatka podglądu z momentu wstrzymania (zachowywana przy rotacji ekranu). */
+    val frozenBitmap: android.graphics.Bitmap? = null,
 )
