@@ -15,6 +15,10 @@ CameraX ──► ML Kit Text Recognition (on-device OCR) ──► stabilizator
 
 Obsługiwane typy: jednokrotny/wielokrotny wybór, pytania otwarte, pola formularzy, zadania matematyczne, **krzyżówki** (wykrywanie siatki, hasła Poziomo/Pionowo, litery wpisywane w kratki na nakładce, solver skrzyżowań).
 
+## Pobierz APK
+
+**[⬇ PaperMind-0.1.0-debug.apk](https://github.com/lukaszkosminski/papermind/releases/download/v0.1.0/PaperMind-0.1.0-debug.apk)** — wszystkie wersje: [Releases](https://github.com/lukaszkosminski/papermind/releases)
+
 ## Build
 
 ```bash
