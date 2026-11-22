@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Diagnostyka Gemini Nano: wersja aplikacji AICore -->
+    <queries>
+        <package android:name="com.google.android.aicore" />
+    </queries>
+
     <application
         android:name=".PaperMindApp"
         android:icon="@mipmap/ic_launcher"

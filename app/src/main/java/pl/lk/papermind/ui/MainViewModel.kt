@@ -220,12 +220,9 @@ class MainViewModel(
             connection.value = if (engine == null) {
                 ConnectionTest.Result(false, "Brak silnika $engineId")
             } else try {
-                val ok = withTimeoutOrNull(connectionTimeoutMs) { engine.isAvailable() }
-                when (ok) {
-                    true -> ConnectionTest.Result(true)
-                    false -> ConnectionTest.Result(false)
-                    null -> ConnectionTest.Result(false, "Przekroczono czas oczekiwania")
-                }
+                val st = withTimeoutOrNull(connectionTimeoutMs) { engine.status() }
+                if (st == null) ConnectionTest.Result(false, "Przekroczono czas oczekiwania")
+                else ConnectionTest.Result(st.available, st.detail)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

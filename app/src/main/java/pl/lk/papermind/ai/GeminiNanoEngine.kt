@@ -1,8 +1,11 @@
 package pl.lk.papermind.ai
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.util.Log
 import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
+import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.ImagePart
@@ -37,30 +40,65 @@ class GeminiNanoEngine(
     private val lock = Mutex()
     private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var model: GenerativeModel? = null
-    private var downloadStarted = false
+    @Volatile private var downloadStarted = false
+    @Volatile private var downloadedBytes = 0L
+    @Volatile private var lastDownloadError: String? = null
 
     private fun client(): GenerativeModel = model ?: Generation.getClient().also { model = it }
 
-    override suspend fun isAvailable(): Boolean = try {
-        when (client().checkStatus()) {
-            FeatureStatus.AVAILABLE -> true
-            FeatureStatus.DOWNLOADABLE -> {
-                startDownload()
-                false
+    override suspend fun isAvailable(): Boolean = status().available
+
+    override suspend fun status(): EngineStatus {
+        val aiCore = aiCoreVersion()
+            ?: return EngineStatus(false, "Brak aplikacji AICore (Android AICore) — zainstaluj/zaktualizuj ją w Sklepie Play")
+        return try {
+            val st = client().checkStatus()
+            Log.i(TAG, "checkStatus=$st aicore=$aiCore")
+            when (st) {
+                FeatureStatus.AVAILABLE -> EngineStatus(true, "Gemini Nano gotowy (AICore $aiCore)")
+                FeatureStatus.DOWNLOADABLE -> {
+                    startDownload()
+                    EngineStatus(false, lastDownloadError?.let { "Pobieranie modelu nie powiodło się: $it" }
+                        ?: "Model Gemini Nano nie jest pobrany — rozpoczęto pobieranie (Wi-Fi, kilka minut). Spróbuj ponownie później.")
+                }
+                FeatureStatus.DOWNLOADING -> {
+                    startDownload() // podpina się pod postęp, jeśli pobieranie zaczął ktoś inny
+                    val mb = downloadedBytes / 1_000_000
+                    EngineStatus(false, "Trwa pobieranie modelu Gemini Nano" + (if (mb > 0) " ($mb MB)" else "") + " — poczekaj i spróbuj ponownie.")
+                }
+                else -> EngineStatus(false, UNAVAILABLE_HINT + " (AICore $aiCore)")
             }
-            else -> false // DOWNLOADING / UNAVAILABLE
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "checkStatus failed", e)
+            EngineStatus(false, describe(e) + " (AICore $aiCore)")
         }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        false
+    }
+
+    private fun aiCoreVersion(): String? = try {
+        context.packageManager.getPackageInfo(AICORE_PACKAGE, 0).versionName ?: "?"
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
     }
 
     private fun startDownload() {
         if (downloadStarted) return
         downloadStarted = true
+        lastDownloadError = null
         client().download()
-            .onEach { if (it is DownloadStatus.DownloadFailed) downloadStarted = false }
+            .onEach {
+                when (it) {
+                    is DownloadStatus.DownloadProgress -> downloadedBytes = it.totalBytesDownloaded
+                    is DownloadStatus.DownloadFailed -> {
+                        Log.w(TAG, "download failed", it.e)
+                        lastDownloadError = describe(it.e)
+                        downloadStarted = false
+                    }
+                    is DownloadStatus.DownloadCompleted -> downloadStarted = false
+                    else -> Unit
+                }
+            }
             .launchIn(downloadScope)
     }
 
@@ -109,6 +147,28 @@ class GeminiNanoEngine(
     }
 
     internal companion object {
+        private const val TAG = "PaperMind/Nano"
+        private const val AICORE_PACKAGE = "com.google.android.aicore"
+        private const val UNAVAILABLE_HINT = "Gemini Nano niedostępny: AICore nie ma jeszcze konfiguracji dla tej funkcji albo urządzenie jej nie wspiera. " +
+            "Zaktualizuj „Android AICore” i „Usługi systemowe Google Play” w Sklepie Play, zostaw telefon z internetem (do kilku godzin), zrestartuj. " +
+            "Odblokowany bootloader = brak wsparcia."
+
+        /** Czytelny opis błędu AICore z podpowiedzią (tabela błędów z dokumentacji ML Kit GenAI). */
+        fun describe(e: Throwable): String {
+            val g = e as? GenAiException ?: (e.cause as? GenAiException)
+            if (g == null) return "Błąd Gemini Nano: ${e.message ?: e.javaClass.simpleName}"
+            val codes = "kod ${g.errorCode}/${g.aiCoreErrorCode}"
+            val hint = when {
+                g.aiCoreErrorCode == 601 || g.errorCode == 4 ->
+                    "nie można połączyć się z usługą AICore — zaktualizuj AICore w Sklepie Play i przeinstaluj PaperMind"
+                g.aiCoreErrorCode == 606 || g.errorCode == 3 ->
+                    "AICore nie pobrał jeszcze konfiguracji (może potrwać do kilku godzin; pomaga restart) lub bootloader jest odblokowany"
+                g.errorCode == 1 || g.errorCode == 0 ->
+                    "problem z siecią podczas pobierania — połącz z internetem i spróbuj za kilka minut"
+                else -> g.message ?: "nieznany błąd"
+            }
+            return "Gemini Nano: $hint ($codes)"
+        }
         const val MAX_OUTPUT_TOKENS = 1024
         private const val DEFAULT_TOKEN_LIMIT = 4000
         private const val CHARS_PER_TOKEN = 3
