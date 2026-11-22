@@ -11,7 +11,11 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** Szyfrowanie sekretów kluczem AES/GCM trzymanym w Android Keystore. Format: base64(iv[12] + ciphertext). */
 class KeystoreCipher(private val alias: String = "papermind_secrets") {
-    private fun key(): SecretKey {
+    @Volatile private var cachedKey: SecretKey? = null
+
+    private fun key(): SecretKey = cachedKey ?: synchronized(this) { cachedKey ?: loadOrCreateKey().also { cachedKey = it } }
+
+    private fun loadOrCreateKey(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getKey(alias, null) as? SecretKey)?.let { return it }
         val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")

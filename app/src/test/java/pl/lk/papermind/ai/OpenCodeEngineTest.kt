@@ -88,7 +88,7 @@ class OpenCodeEngineTest {
         assertEquals("big-pickle", create["model"]!!.jsonObject["id"]!!.jsonPrimitive.content)
         assertEquals("opencode", create["model"]!!.jsonObject["providerID"]!!.jsonPrimitive.content)
         val prompt = Json.parseToJsonElement(bodies["POST /api/session/ses_1/prompt"]!!).jsonObject["text"]!!.jsonPrimitive.content
-        assertTrue(prompt.contains("id=q1") && prompt.contains("STRICT JSON"))
+        assertTrue(prompt.contains("id=Q1") && prompt.contains("STRICT JSON"))
     }
 
     @Test fun legacyFlowWithModelAndFencedJson() = runTest {
@@ -146,6 +146,18 @@ class OpenCodeEngineTest {
         fail = false
         assertEquals(listOf("B"), e.answer(page(choiceQ("q1"))).single().correctOptionLabels)
         assertEquals(2, seen.count { it == "POST /session" })
+    }
+
+    @Test fun `#10 url user and password are trimmed`() = runTest {
+        start(::legacyHandler)
+        engine(AppSettings(openCodeUser = " opencode ", openCodePassword = " pw\n")).answer(page(choiceQ("q1")))
+        assertTrue(headers.all { it == Credentials.basic("opencode", "pw") })
+    }
+
+    @Test fun `#10 invalid url gives EngineException not crash`() = runTest {
+        val e = OpenCodeEngine(MutableStateFlow(AppSettings(openCodeUrl = "nie url ://")))
+        try { e.answer(page(choiceQ("q1"))); fail() } catch (ex: EngineException) { assertTrue(ex.message!!.startsWith("OpenCode")) }
+        assertFalse(e.isAvailable())
     }
 
     @Test fun parseModel() {

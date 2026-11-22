@@ -19,18 +19,51 @@ object AnswerJsonParser {
     private val json = Json { isLenient = true; ignoreUnknownKeys = true }
     private val fence = Regex("```[a-zA-Z]*\\s*\\n?(.*?)```", RegexOption.DOT_MATCHES_ALL)
 
+    private val aliasRegex = Regex("^q(?:uestion)?[\\s_.#-]*(\\d+)$", RegexOption.IGNORE_CASE)
+
+    /**
+     * Dopasowanie wpisu do pytania (kolejne kroki): prawdziwe id → alias `Q<n>` z promptu → numer pytania →
+     * gołe `n` jako indeks → kolejność (gdy liczba wpisów = liczbie pytań).
+     */
     fun parse(raw: String, questions: List<DetectedQuestion>, engine: EngineId): List<Answer> {
         val byId = questions.associateBy { it.id.trim().lowercase() }
+        val byNumber = HashMap<String, DetectedQuestion>().also { m ->
+            questions.forEach { q -> q.number?.let(::numberKey)?.takeIf { it.isNotEmpty() }?.let { m.putIfAbsent(it, q) } }
+        }
         val entries = extractEntries(raw)
+        val rawIds = entries.map { e ->
+            (e.string("id") ?: e.string("questionId") ?: e.string("question_id") ?: e.string("number"))?.trim()
+        }
+        val direct = rawIds.map { resolve(it, questions, byId, byNumber) }
+        // kolejność tylko gdy żaden wpis nie trafił po id/aliasie/numerze (inaczej ryzyko przypisania do złego pytania)
+        val byOrder = entries.size == questions.size && direct.all { it == null }
         val seen = HashSet<String>()
         val out = ArrayList<Answer>()
-        for (e in entries) {
-            val rawId = e.string("id") ?: e.string("questionId") ?: continue
-            val q = byId[rawId.trim().lowercase()] ?: continue
-            if (!seen.add(q.id)) continue
+        entries.forEachIndexed { idx, e ->
+            val q = (if (byOrder) questions[idx] else direct[idx]) ?: return@forEachIndexed
+            if (!seen.add(q.id)) return@forEachIndexed
             out += toAnswer(e, q, engine)
         }
         return out
+    }
+
+    private fun numberKey(s: String): String = s.trim().lowercase().filter { it.isLetterOrDigit() }
+
+    private fun resolve(
+        rawId: String?,
+        questions: List<DetectedQuestion>,
+        byId: Map<String, DetectedQuestion>,
+        byNumber: Map<String, DetectedQuestion>,
+    ): DetectedQuestion? {
+        if (!rawId.isNullOrEmpty()) {
+            byId[rawId.lowercase()]?.let { return it }
+            aliasRegex.find(rawId)?.groupValues?.get(1)?.toIntOrNull()?.let { n ->
+                questions.getOrNull(n - 1)?.let { return it }
+            }
+            byNumber[numberKey(rawId)]?.let { return it }
+            rawId.toIntOrNull()?.let { n -> questions.getOrNull(n - 1)?.let { return it } }
+        }
+        return null
     }
 
     private fun toAnswer(e: JsonObject, q: DetectedQuestion, engine: EngineId): Answer {

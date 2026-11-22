@@ -49,8 +49,13 @@ class OpenCodeEngine(
     private val lock = Mutex()
     private var session: SessionState? = null
 
+    private fun AppSettings.sanitized() = copy(
+        openCodeUrl = openCodeUrl.trim(), openCodeUser = openCodeUser.trim(),
+        openCodePassword = openCodePassword.trim(), openCodeModel = openCodeModel.trim(),
+    )
+
     override suspend fun isAvailable(): Boolean = try {
-        val s = settings.first()
+        val s = settings.first().sanitized()
         s.openCodeUrl.isNotBlank() && detectApi(s, quick = true) != null
     } catch (e: CancellationException) {
         throw e
@@ -72,7 +77,7 @@ class OpenCodeEngine(
     }
 
     override suspend fun answer(page: ParsedPage): List<Answer> = lock.withLock {
-        val s = settings.first()
+        val s = settings.first().sanitized()
         if (s.openCodeUrl.isBlank()) throw EngineException("Nie ustawiono adresu serwera OpenCode")
         val prompt = PromptBuilder.build(page, s.language)
         val text = try {
@@ -87,6 +92,12 @@ class OpenCodeEngine(
         } catch (e: IOException) {
             dropSession(s)
             throw EngineException("OpenCode: błąd połączenia (${e.message ?: e.javaClass.simpleName})", e)
+        } catch (e: IllegalArgumentException) {
+            dropSession(s)
+            throw EngineException("OpenCode: niepoprawny adres serwera lub dane logowania", e)
+        } catch (e: Exception) {
+            dropSession(s)
+            throw EngineException("OpenCode: ${e.message ?: e.javaClass.simpleName}", e)
         }
         if (text.isBlank()) throw EngineException("OpenCode: pusta odpowiedź modelu")
         AnswerJsonParser.parse(text, page.questions, id)
@@ -106,7 +117,7 @@ class OpenCodeEngine(
 
     private suspend fun createSession(s: AppSettings, key: String): SessionState {
         val api = detectApi(s, quick = false)
-            ?: throw EngineException("Serwer OpenCode (${s.openCodeUrl}) nie odpowiada")
+            ?: throw EngineException("OpenCode: serwer (${s.openCodeUrl}) nie odpowiada")
         val model = parseModel(s.openCodeModel)
         val body = buildJsonObject {
             put("title", "PaperMind")
@@ -195,7 +206,7 @@ class OpenCodeEngine(
         const val MAX_SESSION_USES = 20
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+        fun defaultClient(): OkHttpClient = Http.sharedClient.newBuilder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
