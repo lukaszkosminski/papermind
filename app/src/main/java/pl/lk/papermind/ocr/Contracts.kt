@@ -15,6 +15,10 @@ interface OcrPipeline {
     val pages: Flow<ParsedPage>
     fun bind(controller: LifecycleCameraController, executor: Executor)
     fun unbind(controller: LifecycleCameraController)
+    /** Zapomina ostatnio wyemitowaną stronę — ta sama kartka zostanie przetworzona ponownie (np. po „Wyczyść”). */
+    fun reset() {}
+    /** Zwalnia zasoby (ML Kit, wątki). */
+    fun close() {}
 }
 
 /** Agent A. Czysta logika (bez Androida) — testy jednostkowe JVM. */

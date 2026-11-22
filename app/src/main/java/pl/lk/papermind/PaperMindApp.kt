@@ -7,32 +7,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import pl.lk.papermind.ai.AnswerEngine
 import pl.lk.papermind.ai.AnswerService
+import pl.lk.papermind.ai.AnswerServiceImpl
+import pl.lk.papermind.ai.CloudEngine
+import pl.lk.papermind.ai.GeminiNanoEngine
+import pl.lk.papermind.ai.OpenCodeEngine
 import pl.lk.papermind.model.EngineId
+import pl.lk.papermind.ocr.MlKitOcrPipeline
 import pl.lk.papermind.ocr.OcrPipeline
+import pl.lk.papermind.settings.DataStoreSettingsRepository
 import pl.lk.papermind.settings.SettingsRepository
-import pl.lk.papermind.ui.fake.FakeAnswerService
-import pl.lk.papermind.ui.fake.FakeEngine
-import pl.lk.papermind.ui.fake.FakeOcrPipeline
-import pl.lk.papermind.ui.fake.InMemorySettingsRepository
 
-/** Ręczne DI — jedno miejsce, w którym podmienia się fake'i na prawdziwe implementacje. */
-class AppContainer(@Suppress("UNUSED_PARAMETER") context: Context) {
+/** Ręczne DI. Fake'i z ui/fake służą testom i podglądom. */
+class AppContainer(context: Context) {
+    private val appContext = context.applicationContext
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    // TODO(integracja): val settingsRepository: SettingsRepository = DataStoreSettingsRepository(context)
-    val settingsRepository: SettingsRepository = InMemorySettingsRepository()
+    val settingsRepository: SettingsRepository = DataStoreSettingsRepository(appContext)
 
-    // TODO(integracja): val ocrPipeline: OcrPipeline = MlKitOcrPipeline(context, settingsRepository.settings)
-    val ocrPipeline: OcrPipeline = FakeOcrPipeline()
+    val ocrPipeline: OcrPipeline = MlKitOcrPipeline(appContext, settingsRepository.settings)
 
-    // TODO(integracja):
-    //   val engines: Map<EngineId, AnswerEngine> = listOf(
-    //       GeminiNanoEngine(context), OpenCodeEngine(settingsRepository.settings), CloudEngine(settingsRepository.settings),
-    //   ).associateBy { it.id }
-    val engines: Map<EngineId, AnswerEngine> = EngineId.entries.associateWith { FakeEngine(it) }
+    val engines: Map<EngineId, AnswerEngine> = listOf(
+        GeminiNanoEngine(appContext, settingsRepository.settings),
+        OpenCodeEngine(settingsRepository.settings),
+        CloudEngine(settingsRepository.settings),
+    ).associateBy { it.id }
 
-    // TODO(integracja): val answerService: AnswerService = AnswerServiceImpl(engines.values.toList(), settingsRepository, appScope)
-    val answerService: AnswerService = FakeAnswerService(appScope)
+    val answerService: AnswerService = AnswerServiceImpl(engines.values.toList(), settingsRepository, appScope)
 }
 
 class PaperMindApp : Application() {

@@ -80,6 +80,10 @@ class MlKitOcrPipeline(
 
     private val boundController = AtomicReference<LifecycleCameraController?>(null)
 
+    /** Reset wykonywany w wątku przetwarzania (stabilizator nie jest thread-safe). */
+    @Volatile
+    private var resetRequested = false
+
     init {
         scope.launch {
             settings.collect { s ->
@@ -88,6 +92,10 @@ class MlKitOcrPipeline(
         }
         scope.launch {
             for (frame in incoming) {
+                if (resetRequested) {
+                    resetRequested = false
+                    stabilizer.reset()
+                }
                 _frames.value = frame
                 val page = runCatching { stabilizer.onFrame(frame) }
                     .onFailure { Log.w(TAG, "Błąd stabilizacji/parsowania klatki", it) }
@@ -137,7 +145,11 @@ class MlKitOcrPipeline(
     }
 
     /** Zwalnia zasoby (silnik ML Kit, wątek przetwarzania). UI powinno wywołać w `onDestroy`. */
-    fun close() {
+    override fun reset() {
+        resetRequested = true
+    }
+
+    override fun close() {
         boundController.getAndSet(null)?.let { clearAnalyzer(it) }
         incoming.close()
         recognizer.close()

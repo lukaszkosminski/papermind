@@ -128,6 +128,7 @@ class MainViewModel(
 
     fun clear() {
         answerService.clear()
+        ocr.reset()
         currentPage.value = null
         selected.value = null
         tracker.reset()
