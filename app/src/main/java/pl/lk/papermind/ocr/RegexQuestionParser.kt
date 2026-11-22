@@ -27,8 +27,12 @@ class RegexQuestionParser : QuestionParser {
         val h = LineLayout.medianHeight(frame.lines)
         val logical = mergeFillerLines(LineLayout.build(frame.lines), h)
         if (logical.isEmpty()) return emptyList()
-        val builders = segment(logical, h)
-        return buildUnique(builders)
+        // Listy haseł krzyżówki wycinamy przed zwykłą segmentacją pytań — inaczej "1. Kot (3)" byłoby pytaniem.
+        val crossword = CrosswordClueParser.extract(logical, h)
+        val builders = segment(crossword.leftover, h)
+        val questions = buildUnique(builders)
+        if (crossword.clues.isEmpty()) return questions
+        return questions + crossword.clues
     }
 
     // ------------------------------------------------------------------ scalanie wypełniaczy

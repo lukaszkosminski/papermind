@@ -1,5 +1,6 @@
 package pl.lk.papermind.ocr
 
+import pl.lk.papermind.model.Direction
 import java.security.MessageDigest
 
 /**
@@ -11,11 +12,32 @@ import java.security.MessageDigest
  * pytania powtórzone na jednej stronie.
  */
 internal object QuestionId {
-    fun of(stem: String, optionCount: Int, salt: Int = 0): String {
-        val sb = StringBuilder(TextNormalizer.ocrCanonical(stem))
-        sb.append('|').append(optionCount.coerceAtLeast(0))
-        if (salt > 0) sb.append('#').append(salt)
-        val digest = MessageDigest.getInstance("SHA-1").digest(sb.toString().toByteArray(Charsets.UTF_8))
+    fun of(stem: String, optionCount: Int, salt: Int = 0): String = hash(
+        buildString {
+            append(TextNormalizer.ocrCanonical(stem))
+            append('|').append(optionCount.coerceAtLeast(0))
+            appendSalt(salt)
+        },
+    )
+
+    /**
+     * Id hasła krzyżówki: kierunek + numer + kanoniczna treść (numer i kierunek są częścią tożsamości hasła,
+     * bo ta sama treść może wystąpić w obu kierunkach).
+     */
+    fun forClue(direction: Direction, number: Int, text: String, salt: Int = 0): String = hash(
+        buildString {
+            append("clue|").append(direction.name).append('|').append(number)
+            append('|').append(TextNormalizer.ocrCanonical(text))
+            appendSalt(salt)
+        },
+    )
+
+    private fun StringBuilder.appendSalt(salt: Int) {
+        if (salt > 0) append('#').append(salt)
+    }
+
+    private fun hash(payload: String): String {
+        val digest = MessageDigest.getInstance("SHA-1").digest(payload.toByteArray(Charsets.UTF_8))
         return digest.take(8).joinToString("") { "%02x".format(it) }
     }
 }
