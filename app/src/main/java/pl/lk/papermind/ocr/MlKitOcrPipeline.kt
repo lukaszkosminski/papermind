@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import pl.lk.papermind.model.Box
 import pl.lk.papermind.model.OcrFrame
@@ -36,15 +37,19 @@ import pl.lk.papermind.model.OcrLine
 import pl.lk.papermind.model.ParsedPage
 import pl.lk.papermind.settings.AppSettings
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Pipeline OCR: CameraX [MlKitAnalyzer] (wyniki w układzie widoku) + ML Kit Text Recognition (model łaciński,
  * polskie znaki obsługiwane) → [OcrFrame] → [FrameStabilizer] → [RegexQuestionParser] → [ParsedPage].
  *
- * - Backpressure `STRATEGY_KEEP_ONLY_LATEST`, analiza w rozdzielczości 1920x1080 (mały druk),
- * - lekkie throttling (nie analizujemy częściej niż co [MIN_ANALYSIS_INTERVAL_MS]),
- * - [frames] to konflated StateFlow z najnowszą klatką, [pages] emituje tylko ustabilizowane strony.
+ * Konfiguracja kontrolera (backpressure + rozdzielczość analizy) należy do UI: wywołaj [configureController]
+ * **raz**, przy tworzeniu `LifecycleCameraController` (przed `bindToLifecycle`). [bind] podpina wyłącznie
+ * analizator, więc pauza/wznowienie ekranu nie rekonfiguruje use case'a i nie restartuje sesji kamery.
+ *
+ * - [frames] to konflated StateFlow z najnowszą klatką, [pages] emituje tylko ustabilizowane strony,
+ * - lekkie throttling (nie analizujemy częściej niż co [MIN_ANALYSIS_INTERVAL_MS]).
  */
 class MlKitOcrPipeline(
     context: Context,
@@ -81,21 +86,21 @@ class MlKitOcrPipeline(
     private val boundController = AtomicReference<LifecycleCameraController?>(null)
 
     /** Reset wykonywany w wątku przetwarzania (stabilizator nie jest thread-safe). */
-    @Volatile
-    private var resetRequested = false
+    private val resetRequested = AtomicBoolean(false)
+
+    private val closed = AtomicBoolean(false)
 
     init {
         scope.launch {
-            settings.collect { s ->
-                stabilityMs = s.stabilityMs.coerceIn(150L, 5_000L)
-            }
+            settings
+                .catch { Log.w(TAG, "Błąd strumienia ustawień", it) }
+                .collect { s ->
+                    stabilityMs = s.stabilityMs.coerceIn(150L, 5_000L)
+                }
         }
         scope.launch {
             for (frame in incoming) {
-                if (resetRequested) {
-                    resetRequested = false
-                    stabilizer.reset()
-                }
+                if (resetRequested.getAndSet(false)) stabilizer.reset()
                 _frames.value = frame
                 val page = runCatching { stabilizer.onFrame(frame) }
                     .onFailure { Log.w(TAG, "Błąd stabilizacji/parsowania klatki", it) }
@@ -106,15 +111,18 @@ class MlKitOcrPipeline(
     }
 
     /**
-     * Podpina analizę OCR pod kontroler kamery. **Wywołuj z wątku głównego** (wymóg CameraController),
-     * [executor] powinien być wątkiem tła (np. `Executors.newSingleThreadExecutor()`).
+     * Podpina **wyłącznie analizator** pod kontroler kamery (bez rekonfiguracji use case'a).
+     * **Wywołuj z wątku głównego** (wymóg CameraController), [executor] powinien być wątkiem tła
+     * (np. `Executors.newSingleThreadExecutor()`). Powtórne `bind` z tym samym kontrolerem jest no-op.
      */
     override fun bind(controller: LifecycleCameraController, executor: Executor) {
+        if (closed.get()) {
+            Log.w(TAG, "bind() po close() — ignoruję")
+            return
+        }
         val previous = boundController.getAndSet(controller)
-        if (previous != null && previous !== controller) clearAnalyzer(previous)
-
-        controller.setImageAnalysisBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-        controller.setImageAnalysisResolutionSelector(ANALYSIS_RESOLUTION)
+        if (previous === controller) return
+        if (previous != null) clearAnalyzer(previous)
 
         val analyzer = MlKitAnalyzer(
             listOf(recognizer),
@@ -144,12 +152,14 @@ class MlKitOcrPipeline(
         clearAnalyzer(controller)
     }
 
-    /** Zwalnia zasoby (silnik ML Kit, wątek przetwarzania). UI powinno wywołać w `onDestroy`. */
+    /** Zapomina ostatnio wyemitowaną stronę — kolejna stabilna klatka zostanie przetworzona ponownie. */
     override fun reset() {
-        resetRequested = true
+        if (!closed.get()) resetRequested.set(true)
     }
 
+    /** Zwalnia zasoby (ML Kit, kanał, wątek). Idempotentne; UI woła przy końcu życia aplikacji. */
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         boundController.getAndSet(null)?.let { clearAnalyzer(it) }
         incoming.close()
         recognizer.close()
@@ -216,9 +226,9 @@ class MlKitOcrPipeline(
         override fun getDefaultTargetResolution(): Size? = delegate.defaultTargetResolution
     }
 
-    private companion object {
-        const val TAG = "MlKitOcrPipeline"
-        const val MIN_ANALYSIS_INTERVAL_MS = 120L
+    companion object {
+        private const val TAG = "MlKitOcrPipeline"
+        private const val MIN_ANALYSIS_INTERVAL_MS = 120L
 
         /**
          * 16:9 / 1080p — kompromis: wystarczająco dużo pikseli na mały druk, wciąż płynnie na S25 Ultra.
@@ -233,5 +243,15 @@ class MlKitOcrPipeline(
                 ),
             )
             .build()
+
+        /**
+         * Konfiguracja kontrolera kamery do OCR — wywołać **raz** przy tworzeniu `LifecycleCameraController`,
+         * przed `bindToLifecycle`. Ustawia `STRATEGY_KEEP_ONLY_LATEST` i rozdzielczość analizy 1080p.
+         * Wywołanie po związaniu z cyklem życia wymusza recreację use case'a (mrugnięcie kamery).
+         */
+        fun configureController(controller: LifecycleCameraController) {
+            controller.setImageAnalysisBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            controller.setImageAnalysisResolutionSelector(ANALYSIS_RESOLUTION)
+        }
     }
 }

@@ -56,3 +56,57 @@ zależność `androidx.camera:camera-mlkit-vision` (1.7.0). `gradle.properties` 
    Obejście: `FrameStabilizer.reset()` istnieje, ale nie jest wystawione w kontrakcie.
 3. `OcrPipeline.frames` — gdyby UI chciało synchronicznie sięgać po ostatnią klatkę, wygodniejsze byłoby
    `StateFlow<OcrFrame>` zamiast `Flow<OcrFrame>` (implementacja i tak zwraca `StateFlow`).
+
+---
+
+## Runda poprawek (po `notes/review.md` + `briefs/fixes.md`)
+
+### #7 (WAŻNY) — konfiguracja `ImageAnalysis` poza `bind()`
+
+- `MlKitOcrPipeline.ANALYSIS_RESOLUTION` jest teraz **publiczną stałą** (companion object), a obok niej dodana
+  `MlKitOcrPipeline.configureController(controller)` — ustawia `STRATEGY_KEEP_ONLY_LATEST` i rozdzielczość analizy
+  1920×1080 (`FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER`).
+- `bind()` podpina **wyłącznie analizator** (`setImageAnalysisAnalyzer`) — żadnej rekonfiguracji use case'a, więc
+  pauza/wznowienie ekranu nie restartuje już sesji kamery. Powtórne `bind()` z tym samym kontrolerem jest no-op.
+- **Wymagany krok po stronie UI (agent C):** wywołać `MlKitOcrPipeline.configureController(controller)` **raz**,
+  z wątku głównego, przy tworzeniu kontrolera w `remember {}` (przed `bindToLifecycle`). Bez tego CameraX użyje
+  domyślnej, małej rozdzielczości analizy — OCR małego druku będzie wyraźnie gorszy. `bind()`/`unbind()`/`close()`
+  trzeba wołać z wątku głównego (wymóg `CameraController`; `close()` z tła przekierowuje czyszczenie analizatora).
+
+### #8 (WAŻNY) — wydajność `similarity()`
+
+- `TextNormalizer` robi teraz **jedno** foldowanie i jedno przejście na tekst (sklejony tekst + tokeny razem).
+- Szybkie odrzucenie po Jaccardzie (`j < 0.50` → Levenshtein w ogóle nie jest liczony).
+- Levenshtein: wspólny prefiks/sufiks odcinany przed macierzą, pasmo Ukkonena z **adaptacyjnym poszerzaniem**
+  (32 → 128 → 512 …) i przerwaniem, gdy cały wiersz przekracza limit — dla typowej, prawie identycznej klatki
+  liczy się tylko wąskie pasmo.
+- Nowe `similarityAtLeast(a, b, threshold)`: dokładna decyzja progowa, pasmo dobierane do progu
+  (0.985 → ~1,5% długości tekstu). `FrameStabilizer` używa jej dla progów 0.55 / 0.90 / 0.985.
+- Pomiar na JVM (test `similarity dziala na dlugiej stronie szybko`): strona ~1467 znaków, mediana
+  `similarity()` ≈ 0,7 ms (limit < 2 ms), `similarityAtLeast(…, 0.985)` ≈ 0,2 ms. Wcześniej: pełna macierz
+  1500×1500 (≈2,25 mln komórek) kilka razy na sekundę.
+
+### #17 (DROBNY) — id pytania odporne na szum OCR
+
+- `TextNormalizer.ocrCanonical`: diakrytyki/interpunkcja/spacje usunięte, mylone znaki ujednolicone:
+  `0→o`, `1→l`, `i→l`, `5→s`, `8→b`, `rn→m`.
+- `QuestionId.of(stem, optionCount, salt)`: SHA-1 z kanonicznej treści pytania (bez numeru i bez opcji)
+  + liczba opcji; wynik to 16 znaków hex (format bez zmian).
+- **Zmiana semantyki (zgodnie z briefem):** treść i etykiety opcji nie wchodzą już do id — liczy się tylko pień
+  i **liczba** opcji. Pytania o identycznym pniu i tej samej liczbie opcji mają to samo id; dla dedupu stron
+  i cache AI to pożądane (odporność na pomyłki w opcjach), a kolizja dwóch różnych pytań o identycznym pniu jest
+  znikoma. Gdyby w przyszłości trzeba było rozróżniać opcje, warto dodać do id „odcisk” opcji osobno.
+- Testy: `QuestionIdTest` (8 przypadków: 0/o, 1/l/i, 5/s, 8/b, rn/m, diakrytyki, liczba opcji, sól, format).
+
+### `reset()` / `close()` — poprawność wątków
+
+- `reset()` ustawia `AtomicBoolean`; reset stabilizatora wykonuje **jedyny** wątek przetwarzający klatki
+  (`getAndSet(false)`), więc nie ma wyścigu ze stanem `FrameStabilizer`.
+- `close()` jest idempotentne (`compareAndSet`): czyści analizator, zamyka kanał, `TextRecognizer` i scope;
+  kolejne `bind()` po `close()` jest ignorowane (log ostrzeżenia).
+- Strumień ustawień ma `.catch {}` — błąd DataStore nie zabija pętli OCR (zostaje domyślne `stabilityMs`).
+
+### Testy po rundzie poprawek
+
+`assembleDebug` + `testDebugUnitTest` zielone. Testy OCR: 77 (parser 32, stabilizator 11, id 8, wzorce 14,
+normalizator 12 — w tym test wydajności i zgodności `similarityAtLeast` z `similarity`).

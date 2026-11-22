@@ -58,13 +58,13 @@ class FrameStabilizer(
 
         val prev = prevText
         prevText = text
-        if (prev != null && TextNormalizer.similarity(prev, text) < config.motionSimilarity) {
+        if (prev != null && !TextNormalizer.similarityAtLeast(prev, text, config.motionSimilarity)) {
             // duża zmiana kadru — wymagamy nowego, pełnego okna stabilności
             anchorText = null
         }
 
         val anchor = anchorText
-        if (anchor == null || TextNormalizer.similarity(anchor, text) < config.stableSimilarity) {
+        if (anchor == null || !TextNormalizer.similarityAtLeast(anchor, text, config.stableSimilarity)) {
             anchorText = text
             anchorSince = now
             return null
@@ -87,7 +87,7 @@ class FrameStabilizer(
         val previousText = lastEmittedText
         if (previousText != null &&
             ids.size == lastEmittedIds?.size &&
-            TextNormalizer.similarity(previousText, text) >= config.duplicateSimilarity
+            TextNormalizer.similarityAtLeast(previousText, text, config.duplicateSimilarity)
         ) {
             anchorSince = now
             return null

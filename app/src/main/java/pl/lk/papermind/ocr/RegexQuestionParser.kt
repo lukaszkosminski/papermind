@@ -391,7 +391,7 @@ class RegexQuestionParser : QuestionParser {
                 QuestionPatterns.isMath(text) -> QuestionType.MATH
                 else -> QuestionType.OPEN
             }
-            val id = QuestionId.of(text, answerOptions.map { it.label }, answerOptions.map { it.text }, salt)
+            val id = QuestionId.of(text, answerOptions.size, salt)
             return DetectedQuestion(id, number, type, text, answerOptions, box)
         }
     }
