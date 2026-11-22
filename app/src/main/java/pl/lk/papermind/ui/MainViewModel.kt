@@ -37,7 +37,7 @@ import pl.lk.papermind.ocr.OcrPipeline
 import pl.lk.papermind.settings.AppSettings
 import pl.lk.papermind.settings.SettingsRepository
 import pl.lk.papermind.ui.crossword.GridTracker
-import pl.lk.papermind.ui.crossword.crosswordLetters
+import pl.lk.papermind.ai.crosswordLetters
 import pl.lk.papermind.ui.tracking.OverlayTracker
 import pl.lk.papermind.ui.tracking.TrackedQuestion
 import java.util.concurrent.Executor

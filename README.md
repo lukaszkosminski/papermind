@@ -13,7 +13,7 @@ CameraX ──► ML Kit Text Recognition (on-device OCR) ──► stabilizator
                    ML Kit GenAI Prompt API)  (`opencode serve`)        (Anthropic / Gemini / OpenAI)
 ```
 
-Obsługiwane typy: jednokrotny/wielokrotny wybór, pytania otwarte, pola formularzy, zadania matematyczne.
+Obsługiwane typy: jednokrotny/wielokrotny wybór, pytania otwarte, pola formularzy, zadania matematyczne, **krzyżówki** (wykrywanie siatki, hasła Poziomo/Pionowo, litery wpisywane w kratki na nakładce, solver skrzyżowań).
 
 ## Build
 
