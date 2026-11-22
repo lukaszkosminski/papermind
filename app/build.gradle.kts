@@ -43,6 +43,7 @@ dependencies {
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
+    implementation(libs.camera.mlkit.vision)
     implementation(libs.mlkit.text)
     implementation(libs.mlkit.genai.prompt)
     implementation(libs.datastore.preferences)
