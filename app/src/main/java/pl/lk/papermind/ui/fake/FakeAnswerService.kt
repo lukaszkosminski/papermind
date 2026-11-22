@@ -54,6 +54,7 @@ class FakeAnswerService(
             explanation = "Przykładowe uzasadnienie.", confidence = 0.8f, engine = engine)
         QuestionType.OPEN -> Answer(q.id, text = "Proces, w którym rośliny zamieniają światło, wodę i CO₂ w glukozę i tlen.",
             explanation = "Zachodzi w chloroplastach.", confidence = 0.7f, engine = engine)
+        QuestionType.CROSSWORD_CLUE -> Answer(q.id, text = "A".repeat(q.clue?.length ?: 5), confidence = 0.6f, engine = engine)
         QuestionType.MATH -> Answer(q.id, text = "89", explanation = "12·7 = 84, 84 + 5 = 89.", confidence = 0.99f, engine = engine)
         QuestionType.FORM_FIELD -> Answer(q.id, text = "Jan Kowalski", confidence = 0.4f, engine = engine)
     }
