@@ -160,6 +160,47 @@ class OpenCodeEngineTest {
         assertFalse(e.isAvailable())
     }
 
+    @Test fun statusReportsV2() = runTest {
+        start(::v2Handler)
+        val st = engine().status()
+        val detail = st.detail!!
+        assertTrue(detail, st.available)
+        assertTrue(detail.contains("v2"))
+    }
+
+    @Test fun statusReportsLegacy() = runTest {
+        start(::legacyHandler)
+        val st = engine().status()
+        val detail = st.detail!!
+        assertTrue(detail, st.available)
+        assertTrue(detail.contains("klasyczne"))
+    }
+
+    @Test fun status401GivesPasswordHint() = runTest {
+        start { _, key -> if (key == "GET /api/info") MockResponse.Builder().code(401).build() else MockResponse.Builder().code(404).build() }
+        val st = engine().status()
+        val detail = st.detail!!
+        assertFalse(st.available)
+        assertTrue(detail, detail.contains("401") && detail.contains("hasło"))
+    }
+
+    @Test fun statusBlankUrl() = runTest {
+        val st = OpenCodeEngine(MutableStateFlow(AppSettings(openCodeUrl = "  "))).status()
+        val detail = st.detail!!
+        assertFalse(st.available)
+        assertTrue(detail.contains("adresu"))
+    }
+
+    @Test fun statusUnreachableServer() = runTest {
+        server.start()
+        val url = server.url("/").toString().trimEnd('/')
+        server.close()
+        val st = OpenCodeEngine(MutableStateFlow(AppSettings(openCodeUrl = url))).status()
+        val detail = st.detail!!
+        assertFalse(st.available)
+        assertTrue(detail, detail.contains("nie odpowiada"))
+    }
+
     @Test fun parseModel() {
         assertEquals("a" to "b/c", OpenCodeEngine.parseModel(" a/b/c "))
         assertEquals(null, OpenCodeEngine.parseModel(""))

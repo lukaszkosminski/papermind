@@ -29,11 +29,11 @@ object OpenCodeGoApi {
 
     class Model(val id: String, val name: String, val vision: Boolean)
 
-    fun headers(b: Request.Builder, apiKey: String): Request.Builder = b
-        .header("Authorization", "Bearer $apiKey")
+    fun headers(b: Request.Builder, apiKey: String, authenticate: Boolean = true): Request.Builder = b
         .header("User-Agent", USER_AGENT)
         .header("x-opencode-session", sessionId)
         .header("Content-Type", "application/json")
+        .apply { if (authenticate) header("Authorization", "Bearer ${apiKey.trim()}") }
 
     /** Lista modeli tekstowych dostępnych w Go (bez darmowych — działają tylko wewnątrz OpenCode). */
     suspend fun models(apiKey: String): List<Model> = withContext(Dispatchers.IO) {

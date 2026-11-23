@@ -162,6 +162,85 @@ class CloudEngineTest {
         try { engine(AppSettings()).answer(page(choiceQ("q1"))); fail() } catch (e: EngineException) { assertTrue(e.message!!.contains("klucza")) }
     }
 
+    // --- OpenCode Go: publiczny probe + diagnostyka klucza/modelu ---
+
+    @Test fun goAvailabilityUsesPublicModelsWithoutKey() = runTest {
+        server.enqueue(json("""{"data":[]}"""))
+        val e = engine(AppSettings(cloudProvider = CloudProvider.OPENCODE_GO, cloudApiKey = "oc_sk_1"))
+        assertTrue(e.isAvailable())
+        val req = server.takeRequest()
+        assertEquals("/v1/models", req.url.encodedPath)
+        assertEquals(null, req.headers["Authorization"])
+        assertTrue(req.headers["x-opencode-session"]!!.startsWith("ses_"))
+    }
+
+    @Test fun goStatusReachesChatProbe() = runTest {
+        server.enqueue(json("""{"data":[]}"""))
+        server.enqueue(json("""{"choices":[{"message":{"content":"OK"}}]}"""))
+        val st = engine(
+            AppSettings(cloudProvider = CloudProvider.OPENCODE_GO, cloudApiKey = " oc_sk_1 ", cloudModel = "kimi-k3"),
+        ).status()
+        val detail = st.detail!!
+        assertTrue(detail, st.available)
+        assertTrue(detail.contains("kimi-k3"))
+        val probe = server.takeRequest()
+        val chat = server.takeRequest()
+        assertEquals("/v1/models", probe.url.encodedPath)
+        assertEquals(null, probe.headers["Authorization"])
+        assertEquals("/openai/v1/chat/completions", chat.url.encodedPath)
+        assertEquals("Bearer oc_sk_1", chat.headers["Authorization"])
+        assertTrue(chat.headers["x-opencode-session"]!!.startsWith("ses_"))
+        val body = Json.parseToJsonElement(chat.body!!.utf8()).jsonObject
+        assertEquals("kimi-k3", body["model"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun goStatusReportsChat401() = runTest {
+        server.enqueue(json("""{"data":[]}"""))
+        server.enqueue(MockResponse.Builder().code(401).body("""{"error":{"message":"invalid key"}}""").build())
+        val st = engine(AppSettings(cloudProvider = CloudProvider.OPENCODE_GO, cloudApiKey = "bad")).status()
+        val detail = st.detail!!
+        assertFalse(st.available)
+        assertTrue(detail, detail.contains("401") && detail.contains("klucz"))
+    }
+
+    @Test fun goStatus403OnDeepSeekMentionsGlobalRegion() = runTest {
+        server.enqueue(json("""{"data":[]}"""))
+        server.enqueue(
+            MockResponse.Builder().code(403)
+                .body("""{"type":"error","error":{"type":"EntitlementError","message":"OpenCode Go subscription required."}}""")
+                .build(),
+        )
+        val st = engine(
+            AppSettings(cloudProvider = CloudProvider.OPENCODE_GO, cloudApiKey = "k", cloudModel = "deepseek-v4.1-flash"),
+        ).status()
+        val detail = st.detail!!
+        assertFalse(st.available)
+        assertTrue(detail, detail.contains("Global"))
+    }
+
+    @Test fun goStatus403OnLongCatMentionsGlobalRegion() = runTest {
+        server.enqueue(json("""{"data":[]}"""))
+        server.enqueue(MockResponse.Builder().code(403).body("""{"error":{"message":"region blocked"}}""").build())
+        val st = engine(
+            AppSettings(cloudProvider = CloudProvider.OPENCODE_GO, cloudApiKey = "k", cloudModel = "longcat-2.5"),
+        ).status()
+        val detail = st.detail!!
+        assertFalse(st.available)
+        assertTrue(detail, detail.contains("Global"))
+    }
+
+    @Test fun goAnswer403OnDeepSeekMentionsGlobalRegion() = runTest {
+        server.enqueue(MockResponse.Builder().code(403).body("""{"error":{"message":"region blocked"}}""").build())
+        try {
+            engine(
+                AppSettings(cloudProvider = CloudProvider.OPENCODE_GO, cloudApiKey = "k", cloudModel = "deepseek-v4.1-flash"),
+            ).answer(page(choiceQ("q1")))
+            fail()
+        } catch (e: EngineException) {
+            assertTrue(e.message!!, e.message!!.contains("Global"))
+        }
+    }
+
     // --- krzyżówki: zdjęcie ---
     private val jpeg = byteArrayOf(1, 2, 3, 4)
     private val jpegB64 = java.util.Base64.getEncoder().encodeToString(jpeg)

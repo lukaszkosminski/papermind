@@ -65,29 +65,30 @@ class CloudEngine(
         val label = s.cloudProvider.label()
         if (s.cloudApiKey.isEmpty()) return EngineStatus(false, "$label: brak klucza API")
         return try {
-            val probe = client.newCall(buildProbe(s)).await()
-            DiagLog.log("Chmura", "$label probe: HTTP ${probe.code} ${errorMessage(probe.body)}")
-            if (!probe.ok && probe.code != 429) {
-                val why = when (probe.code) {
-                    401 -> "nieprawidłowy klucz API"
-                    403 -> errorMessage(probe.body).ifBlank { "brak dostępu (subskrypcja/uprawnienia)" }
-                    else -> "HTTP ${probe.code} ${errorMessage(probe.body)}".trim()
-                }
-                return EngineStatus(false, "$label: $why")
+            val probeClient = client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build()
+            val probe = probeClient.newCall(buildProbe(s)).await()
+            DiagLog.log("Chmura", "$label probe: HTTP ${probe.code}${if (probe.ok) "" else " " + errorMessage(probe.body)}")
+            // Dla Go o dostępności rozstrzyga próbny czat: probe /v1/models jest publiczny, a inne
+            // endpointy (np. /v1/usage) mogą zwrócić 403 przy kluczu bez dodatkowych uprawnień.
+            if (s.cloudProvider != CloudProvider.OPENCODE_GO && !probe.ok && probe.code != 429) {
+                return EngineStatus(false, "$label: ${cloudError(s.cloudProvider, "", probe.code, probe.body)}")
             }
             if (s.cloudProvider == CloudProvider.OPENCODE_GO) {
+                if (probe.code == 401) {
+                    return EngineStatus(false, "$label: ${cloudError(s.cloudProvider, "", probe.code, probe.body)}")
+                }
                 val model = s.cloudModel.ifBlank { defaultModel(s.cloudProvider) }
                 val body = buildJsonObject {
                     put("model", model); put("max_tokens", 16)
                     putJsonArray("messages") { add(buildJsonObject { put("role", "user"); put("content", "Say OK") }) }
                 }
-                val req = OpenCodeGoApi.headers(Request.Builder().url("${DEFAULT_BASE_URLS.getValue(s.cloudProvider)}/openai/v1/chat/completions"), s.cloudApiKey)
+                val base = (baseUrls[s.cloudProvider] ?: DEFAULT_BASE_URLS.getValue(s.cloudProvider)).trimEnd('/')
+                val req = OpenCodeGoApi.headers(Request.Builder().url("$base/openai/v1/chat/completions"), s.cloudApiKey)
                     .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-                val r = client.newBuilder().callTimeout(25, TimeUnit.SECONDS).build().newCall(req).await()
-                DiagLog.log("Chmura", "$label test modelu $model: HTTP ${r.code} ${if (r.ok) "" else errorMessage(r.body)}")
+                val r = client.newBuilder().callTimeout(20, TimeUnit.SECONDS).build().newCall(req).await()
+                DiagLog.log("Chmura", "$label test modelu $model: HTTP ${r.code}${if (r.ok) "" else " " + errorMessage(r.body)}")
                 if (!r.ok) {
-                    val hint = if (r.code == 403 && model.startsWith("deepseek")) " (DeepSeek wymaga regionu „Global” w Console → Settings → Privacy)" else ""
-                    return EngineStatus(false, "$label, model $model: HTTP ${r.code} ${errorMessage(r.body)}$hint".trim())
+                    return EngineStatus(false, "$label, model $model: ${cloudError(s.cloudProvider, model, r.code, r.body)}")
                 }
                 return EngineStatus(true, "$label: model $model działa")
             }
@@ -109,7 +110,7 @@ class CloudEngine(
             val model = s.cloudModel.ifBlank { defaultModel(s.cloudProvider) }
             val request = buildRequest(s, model, prompt, page.snapshotJpeg)
             val result = client.newCall(request).await()
-            if (!result.ok) throw EngineException("$label: HTTP ${result.code} ${errorMessage(result.body)}".trim())
+            if (!result.ok) throw EngineException("$label: ${cloudError(s.cloudProvider, model, result.code, result.body)}")
             val text = withContext(Dispatchers.Default) { extractText(s.cloudProvider, result.body) }
             if (text.isBlank()) throw EngineException("$label: pusta odpowiedź modelu")
             return AnswerJsonParser.parse(text, page.questions, id)
@@ -137,8 +138,11 @@ class CloudEngine(
                 .header("x-goog-api-key", s.cloudApiKey).get().build()
             CloudProvider.OPENAI -> Request.Builder().url("$base/v1/models")
                 .header("Authorization", "Bearer ${s.cloudApiKey}").get().build()
-            // /v1/usage: 401 = zły klucz, 403 = brak aktywnej subskrypcji Go
-            CloudProvider.OPENCODE_GO -> OpenCodeGoApi.headers(Request.Builder().url("$base/v1/usage"), s.cloudApiKey).get().build()
+            // Publiczna lista modeli: działa także dla kluczy bez uprawnienia Usage:Read (domyślny
+            // Restricted z Models:Request). Sam klucz waliduje próbny czat w status() i answer().
+            CloudProvider.OPENCODE_GO -> OpenCodeGoApi.headers(
+                Request.Builder().url("$base/v1/models"), s.cloudApiKey, authenticate = false,
+            ).get().build()
         }
     }
 
@@ -292,6 +296,21 @@ class CloudEngine(
                     .joinToString("") { it.str("text").orEmpty() }
                 CloudProvider.OPENAI, CloudProvider.OPENCODE_GO -> (((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)
                     ?.get("message") as? JsonObject)?.str("content").orEmpty()
+            }
+        }
+
+        /** Czytelny błąd HTTP; dla OpenCode Go dokłada wskazówkę o kluczu, subskrypcji, limicie lub regionie. */
+        internal fun cloudError(p: CloudProvider, model: String, code: Int, body: String): String {
+            val msg = errorMessage(body)
+            if (p != CloudProvider.OPENCODE_GO) return "HTTP $code $msg".trim()
+            val detail = msg.ifBlank { "brak dostępu" }
+            return when {
+                code == 401 -> "HTTP 401 $detail — nieprawidłowy lub wygasły klucz API"
+                code == 403 && (model.startsWith("deepseek") || model.startsWith("longcat")) ->
+                    "HTTP 403 $detail — model $model wymaga regionu „Global” w Console → Settings → Privacy"
+                code == 403 -> "HTTP 403 $detail — brak uprawnień klucza lub aktywnej subskrypcji Go"
+                code == 429 -> "HTTP 429 $detail — wyczerpany limit Go"
+                else -> "HTTP $code $msg".trim()
             }
         }
 

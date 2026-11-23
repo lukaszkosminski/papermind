@@ -25,4 +25,11 @@ class OpenCodeGoApiTest {
         assertTrue(r.header("x-opencode-session")!!.startsWith("ses_"))
         assertTrue(r.header("User-Agent")!!.startsWith("papermind/"))
     }
+
+    @Test fun headersCanSkipAuthorizationForPublicProbe() {
+        val r = OpenCodeGoApi.headers(Request.Builder().url("https://x.test/"), "oc_sk_1", authenticate = false).get().build()
+        assertEquals(null, r.header("Authorization"))
+        assertTrue(r.header("x-opencode-session")!!.startsWith("ses_"))
+        assertTrue(r.header("User-Agent")!!.startsWith("papermind/"))
+    }
 }

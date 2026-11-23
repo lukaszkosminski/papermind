@@ -63,6 +63,25 @@ class OpenCodeEngine(
         false
     }
 
+    /** „Testuj połączenie”: rozróżnia brak adresu, brak serwera, złe hasło i wariant API. */
+    override suspend fun status(): EngineStatus {
+        val s = settings.first().sanitized()
+        if (s.openCodeUrl.isBlank()) return EngineStatus(false, "OpenCode: nie ustawiono adresu serwera")
+        val c = client.newBuilder().callTimeout(4, TimeUnit.SECONDS).build()
+        val info = try {
+            c.newCall(get(s, "/api/info")).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return EngineStatus(false, "OpenCode: serwer ${s.openCodeUrl} nie odpowiada (${e.message ?: e.javaClass.simpleName})")
+        }
+        if (info.code == 401) return EngineStatus(false, "OpenCode: 401 — zły login/hasło (OPENCODE_SERVER_PASSWORD)")
+        if (info.ok && isJson(info) && parse(info.body) is JsonObject) return EngineStatus(true, "OpenCode: OK (API v2)")
+        val health = runCatching { c.newCall(get(s, "/global/health")).await() }.getOrNull()
+        if (health != null && health.ok && isJson(health)) return EngineStatus(true, "OpenCode: OK (klasyczne API)")
+        return EngineStatus(false, "OpenCode: HTTP ${info.code} — nie rozpoznano API serwera")
+    }
+
     /** V2 jeśli `/api/info` zwraca JSON, klasyczne jeśli `/global/health` ({"healthy":true}), inaczej null. */
     private suspend fun detectApi(s: AppSettings, quick: Boolean): Api? {
         val c = if (quick) client.newBuilder().callTimeout(4, TimeUnit.SECONDS).build() else client
