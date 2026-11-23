@@ -44,6 +44,7 @@ object PromptBuilder {
         val explanationRule = if (compact) "explanation: at most 1 short sentence." else "explanation: 1-2 sentences."
         return buildString {
             appendLine("You are an expert tutor solving a test or form seen through a phone camera. The text comes from OCR and may contain errors (broken words, wrong digits, merged lines) — silently correct them using context.")
+            appendLine("Context: the user is studying with old practice tests and past exam papers from previous years (study material, not a live exam). Help them learn: give the correct answer with a brief reason.")
             appendLine("Answer EVERY listed question. Be brief and accurate. Do not use tools. $langRule")
             appendLine("Rules per question type:")
             appendLine("- SINGLE_CHOICE: options = exactly one option label (e.g. [\"B\"]).")
