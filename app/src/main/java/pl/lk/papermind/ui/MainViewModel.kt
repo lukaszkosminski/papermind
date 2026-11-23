@@ -55,7 +55,7 @@ class MainViewModel(
     trackingDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val tracker: OverlayTracker = OverlayTracker(),
     private val gridTracker: GridTracker = GridTracker(),
-    private val connectionTimeoutMs: Long = 15_000,
+    private val connectionTimeoutMs: Long = 30_000,
 ) : ViewModel() {
 
     private val frozen = MutableStateFlow(false)

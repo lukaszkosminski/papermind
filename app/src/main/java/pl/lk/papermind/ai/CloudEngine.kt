@@ -18,6 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import pl.lk.papermind.diag.DiagLog
 import pl.lk.papermind.model.Answer
 import pl.lk.papermind.model.EngineId
 import pl.lk.papermind.model.ParsedPage
@@ -56,6 +57,47 @@ class CloudEngine(
         }
         if (ok) { availableKey = fingerprint; availableUntil = clock() + AVAILABILITY_TTL_MS } else availableKey = ""
         return ok
+    }
+
+    /** „Testuj połączenie”: z przyczyną błędu; dla OpenCode Go dodatkowo próbne zapytanie do wybranego modelu. */
+    override suspend fun status(): EngineStatus {
+        val s = settings.first().sanitized()
+        val label = s.cloudProvider.label()
+        if (s.cloudApiKey.isEmpty()) return EngineStatus(false, "$label: brak klucza API")
+        return try {
+            val probe = client.newCall(buildProbe(s)).await()
+            DiagLog.log("Chmura", "$label probe: HTTP ${probe.code} ${errorMessage(probe.body)}")
+            if (!probe.ok && probe.code != 429) {
+                val why = when (probe.code) {
+                    401 -> "nieprawidłowy klucz API"
+                    403 -> errorMessage(probe.body).ifBlank { "brak dostępu (subskrypcja/uprawnienia)" }
+                    else -> "HTTP ${probe.code} ${errorMessage(probe.body)}".trim()
+                }
+                return EngineStatus(false, "$label: $why")
+            }
+            if (s.cloudProvider == CloudProvider.OPENCODE_GO) {
+                val model = s.cloudModel.ifBlank { defaultModel(s.cloudProvider) }
+                val body = buildJsonObject {
+                    put("model", model); put("max_tokens", 16)
+                    putJsonArray("messages") { add(buildJsonObject { put("role", "user"); put("content", "Say OK") }) }
+                }
+                val req = OpenCodeGoApi.headers(Request.Builder().url("${DEFAULT_BASE_URLS.getValue(s.cloudProvider)}/openai/v1/chat/completions"), s.cloudApiKey)
+                    .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+                val r = client.newBuilder().callTimeout(25, TimeUnit.SECONDS).build().newCall(req).await()
+                DiagLog.log("Chmura", "$label test modelu $model: HTTP ${r.code} ${if (r.ok) "" else errorMessage(r.body)}")
+                if (!r.ok) {
+                    val hint = if (r.code == 403 && model.startsWith("deepseek")) " (DeepSeek wymaga regionu „Global” w Console → Settings → Privacy)" else ""
+                    return EngineStatus(false, "$label, model $model: HTTP ${r.code} ${errorMessage(r.body)}$hint".trim())
+                }
+                return EngineStatus(true, "$label: model $model działa")
+            }
+            EngineStatus(true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DiagLog.log("Chmura", "$label błąd: ${e.javaClass.simpleName}: ${e.message}")
+            EngineStatus(false, "$label: ${e.message ?: e.javaClass.simpleName}")
+        }
     }
 
     override suspend fun answer(page: ParsedPage): List<Answer> {
