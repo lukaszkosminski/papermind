@@ -74,6 +74,7 @@ class GeminiNanoEngine(
         for ((name, m) in candidates()) {
             val st = runCatching { m.checkStatus() }.getOrElse { if (it is CancellationException) throw it else FeatureStatus.UNAVAILABLE }
             Log.i(TAG, "config=$name checkStatus=$st")
+            pl.lk.papermind.diag.DiagLog.log("Nano", "model $name: status=$st")
             if (last == null) last = m to st
             if (st != FeatureStatus.UNAVAILABLE) { model = m; return m to st }
         }

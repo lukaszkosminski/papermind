@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import pl.lk.papermind.diag.DiagLog
 import pl.lk.papermind.model.Box
 import pl.lk.papermind.model.CrosswordGrid
 import pl.lk.papermind.model.OcrFrame
@@ -156,6 +157,7 @@ class MlKitOcrPipeline(
                     timestampMs = result.timestamp,
                     lines = toLines(text),
                 )
+                if (frame.lines.isEmpty()) DiagLog.log("OCR", "klatka bez tekstu")
                 incoming.trySend(FramePacket(frame, snapshots.take(result.timestamp)))
             } else {
                 result.getThrowable(recognizer)?.let { Log.w(TAG, "ML Kit OCR error", it) }
@@ -464,6 +466,9 @@ class MlKitOcrPipeline(
         private var sensorToView: Matrix? = null
 
         private val gate = Sharpness.Gate()
+        private var seen = 0
+        private var rejected = 0
+        private var statAt = 0L
 
         override fun analyze(image: ImageProxy) {
             val now = clock()
@@ -472,6 +477,12 @@ class MlKitOcrPipeline(
                 val plane = image.planes.first()
                 gate.accept(Sharpness.score(plane.buffer, image.width, image.height, plane.rowStride), now)
             }.getOrDefault(true)
+            seen++
+            if (!sharp) rejected++
+            if (now - statAt >= 2_000L) {
+                DiagLog.log("Kamera", "ostatnie 2 s: $seen klatek, $rejected odrzuconych (rozmyte), ${image.width}x${image.height}")
+                seen = 0; rejected = 0; statAt = now
+            }
             if (!sharp || (lastRunMs != Long.MIN_VALUE && now - lastRunMs < minIntervalMs)) {
                 image.close()
                 return

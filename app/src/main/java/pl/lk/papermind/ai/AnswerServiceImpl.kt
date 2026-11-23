@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import pl.lk.papermind.diag.DiagLog
 import pl.lk.papermind.model.Answer
 import pl.lk.papermind.model.AnswerState
 import pl.lk.papermind.model.Box
@@ -108,6 +109,7 @@ class AnswerServiceImpl(
             if (toSend.isEmpty()) return
 
             val myEpoch = epoch
+            DiagLog.log("AI", "wysyłam ${toSend.size} z ${questions.size} pytań")
             // Krzyżówka: całe hasła naraz; odpowiedzi znane z cache służą solverowi (wzorce liter, konflikty)
             val known = questions.filter(CrosswordSolver::isClue).mapNotNull { q -> cache[q.id]?.let { q.id to it.answer } }.toMap()
             val sub = page.copy(questions = toSend)
@@ -141,11 +143,14 @@ class AnswerServiceImpl(
         for (engine in orderedEngines(settings)) {
             if (remaining.isEmpty()) break
             val name = engineName(engine.id)
+            val t0 = clock()
+            DiagLog.log("AI", "$name: sprawdzam dostępność")
             val hasClues = remaining.values.any(CrosswordSolver::isClue)
             val limit = (timeouts[engine.id] ?: DEFAULT_TIMEOUT_MS) * (if (hasClues) CROSSWORD_TIMEOUT_FACTOR else 1)
             try {
                 val available = withTimeoutOrNull(AVAILABILITY_TIMEOUT_MS) { engine.isAvailable() }
                 if (available != true) {
+                    DiagLog.log("AI", "$name: ${if (available == null) "brak odpowiedzi na sprawdzenie dostępności" else "niedostępny"}")
                     errors += if (available == null) "$name: brak odpowiedzi (sprawdzanie dostępności)" else "$name: niedostępny"
                     continue
                 }
@@ -156,10 +161,12 @@ class AnswerServiceImpl(
                     if (hasClues) CrosswordSolver.solve(req, known, first, pageClues) { engine.answer(it) } else first
                 }
                 if (result == null) {
+                    DiagLog.log("AI", "$name: timeout po ${limit / 1000} s")
                     errors += "$name: przekroczono czas oczekiwania (${limit / 1000} s)"
                     continue
                 }
                 val valid = result.filter { it.questionId in remaining }
+                DiagLog.log("AI", "$name: odpowiedź po ${clock() - t0} ms, użytecznych ${valid.size}/${result.size}")
                 if (valid.isEmpty()) errors += "$name: brak użytecznej odpowiedzi"
                 for (a in valid) {
                     val q = remaining.remove(a.questionId) ?: continue
@@ -169,6 +176,7 @@ class AnswerServiceImpl(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                DiagLog.log("AI", "$name: błąd ${e.javaClass.simpleName}: ${e.message}")
                 errors += e.message?.takeIf { it.isNotBlank() } ?: "$name: ${e.javaClass.simpleName}"
             }
         }

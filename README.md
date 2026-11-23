@@ -17,7 +17,7 @@ Obsługiwane typy: jednokrotny/wielokrotny wybór, pytania otwarte, pola formula
 
 ## Pobierz APK
 
-**[⬇ PaperMind-0.1.5-debug.apk](https://github.com/lukaszkosminski/papermind/releases/download/v0.1.5/PaperMind-0.1.5-debug.apk)** — wszystkie wersje: [Releases](https://github.com/lukaszkosminski/papermind/releases)
+**[⬇ PaperMind-0.1.6-debug.apk](https://github.com/lukaszkosminski/papermind/releases/download/v0.1.6/PaperMind-0.1.6-debug.apk)** — wszystkie wersje: [Releases](https://github.com/lukaszkosminski/papermind/releases)
 
 ## Build
 

@@ -125,6 +125,8 @@ fun SettingsScreen(
 
             Section(R.string.settings_updates) { UpdateSection() }
 
+            Section(R.string.settings_logs) { DiagnosticsSection() }
+
             Section(R.string.settings_behavior) {
                 Text(stringResource(R.string.settings_language), style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

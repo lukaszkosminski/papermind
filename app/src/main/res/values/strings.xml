@@ -59,6 +59,12 @@
     <string name="settings_updates_install">Zainstaluj</string>
     <string name="settings_updates_permission">Zezwól PaperMind na instalowanie aplikacji, wróć i dotknij „Zainstaluj”</string>
     <string name="settings_updates_error">Błąd: %1$s</string>
+    <string name="settings_logs">Diagnostyka</string>
+    <string name="settings_logs_show">Pokaż logi</string>
+    <string name="settings_logs_hide">Ukryj logi</string>
+    <string name="settings_logs_copy">Kopiuj</string>
+    <string name="settings_logs_clear">Wyczyść</string>
+    <string name="settings_logs_empty">Brak zdarzeń — skieruj kamerę na tekst i wróć tutaj.</string>
     <string name="settings_behavior">Zachowanie</string>
     <string name="settings_language">Język odpowiedzi</string>
     <string name="settings_explanations">Pokazuj uzasadnienia</string>

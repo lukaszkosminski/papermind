@@ -1,5 +1,6 @@
 package pl.lk.papermind.ocr
 
+import pl.lk.papermind.diag.DiagLog
 import pl.lk.papermind.model.Box
 import pl.lk.papermind.model.CrosswordGrid
 import pl.lk.papermind.model.DetectedQuestion
@@ -35,7 +36,7 @@ class FrameStabilizer(
 
     data class Config(
         /** Klatki o podobieństwie ≥ tej wartości uznajemy za "ten sam tekst". */
-        val stableSimilarity: Double = 0.90,
+        val stableSimilarity: Double = 0.85,
         /** Poniżej tego podobieństwa uznajemy, że kamera się ruszyła / to inna scena. */
         val motionSimilarity: Double = 0.55,
         /** Minimalna średnia pewność OCR (gdy ML Kit ją podaje); niżej = rozmycie. */
@@ -45,6 +46,18 @@ class FrameStabilizer(
         /** Strona o takim podobieństwie do ostatnio wysłanej uznawana jest za duplikat (szum OCR). */
         val duplicateSimilarity: Double = 0.985,
     )
+
+    private var lastNoteKey: String? = null
+    private var lastNoteAt = Long.MIN_VALUE
+
+    /** Wpis do logu diagnostycznego: przy zmianie powodu lub najwyżej co 1,5 s dla tego samego. */
+    private inline fun note(key: String, now: Long, msg: () -> String) {
+        if (key != lastNoteKey || now - lastNoteAt >= 1_500L) {
+            lastNoteKey = key
+            lastNoteAt = now
+            DiagLog.log("Stab", msg())
+        }
+    }
 
     private var prevText: String? = null
     private var anchorText: String? = null
@@ -63,6 +76,7 @@ class FrameStabilizer(
         val now = clock()
 
         if (frame.lines.isEmpty() || isBlurry(frame)) {
+            note("blur", now) { if (frame.lines.isEmpty()) "pusta klatka (brak tekstu)" else "rozmyte (niska pewność OCR)" }
             resetWindow()
             prevText = text
             return null
@@ -72,25 +86,36 @@ class FrameStabilizer(
         prevText = text
         if (prev != null && !TextNormalizer.similarityAtLeast(prev, text, config.motionSimilarity)) {
             // duża zmiana kadru — wymagamy nowego, pełnego okna stabilności
+            note("ruch", now) { "ruch/zmiana kadru (podobieństwo < ${config.motionSimilarity}, ${frame.lines.size} linii)" }
             anchorText = null
         }
 
         val anchor = anchorText
         if (anchor == null || !TextNormalizer.similarityAtLeast(anchor, text, config.stableSimilarity)) {
+            note("niestabilny", now) {
+                val sim = anchor?.let { "%.2f".format(TextNormalizer.similarity(it, text)) } ?: "-"
+                "tekst się zmienia (podobieństwo $sim < ${config.stableSimilarity}, ${frame.lines.size} linii)"
+            }
             anchorText = text
             anchorSince = now
             return null
         }
-        if (now - anchorSince < requiredStabilityMs(text, grid)) return null
+        val need = requiredStabilityMs(text, grid)
+        if (now - anchorSince < need) {
+            note("czekam", now) { "stabilnie od ${now - anchorSince}/$need ms" }
+            return null
+        }
 
         var questions = parser.parse(frame)
         var fallback = false
         if (questions.isEmpty() && grid == null) {
             if (isSubstantial(text)) {
+                note("fallback", now) { "parser nie znalazł pytań — wysyłam całą stronę (${text.length} znaków)" }
                 // parser nie rozpoznał pytań, ale w kadrze jest sporo tekstu — AI dostaje całą stronę
                 questions = listOf(pageQuestion(frame))
                 fallback = true
             } else {
+                note("brak-pytan", now) { "brak pytań i za mało tekstu (${text.length} znaków)" }
                 // brak pytań (np. sam nagłówek) — sprawdzamy ponownie dopiero po kolejnym oknie stabilności
                 anchorSince = now
                 return null
@@ -100,6 +125,7 @@ class FrameStabilizer(
         val ids = questions.map { it.id }.toSet()
         val gridSignature = grid?.let { gridSignature(it) }
         if (!fallback && ids == lastEmittedIds && gridSignature == lastEmittedGridSig) {
+            note("duplikat", now) { "ta sama strona (${ids.size} pytań) — pomijam" }
             anchorSince = now
             return null
         }
@@ -120,6 +146,7 @@ class FrameStabilizer(
             return null
         }
 
+        DiagLog.log("Stab", "EMIT: ${questions.size} pytań${if (fallback) " (cała strona)" else ""}, ${frame.lines.size} linii")
         lastEmittedIds = ids
         lastEmittedText = text
         lastEmittedGridSig = gridSignature
