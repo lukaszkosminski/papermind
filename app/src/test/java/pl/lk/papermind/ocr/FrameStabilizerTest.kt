@@ -53,6 +53,29 @@ class FrameStabilizerTest {
         FrameStabilizer(fakeParser, stabilityMs, { clock.now }, config)
 
     @Test
+    fun `bez rozpoznanych pytan dluzszy tekst trafia do AI jako cala strona`() {
+        val clock = FakeClock()
+        val s = FrameStabilizer(object : QuestionParser { override fun parse(frame: OcrFrame) = emptyList<DetectedQuestion>() }, 700L, { clock.now })
+        val f = frame("Zadanie pierwsze dotyczy budowy serca człowieka\nWymień cztery jamy serca oraz zastawki")
+        assertNull(s.onFrame(f))
+        clock.advance(700)
+        val page = s.onFrame(f)
+        assertNotNull(page)
+        assertEquals("page", page!!.questions.single().id)
+        clock.advance(2000)
+        assertNull(s.onFrame(f)) // ta sama strona nie jest wysyłana ponownie
+    }
+
+    @Test
+    fun `krotki tekst bez pytan nie jest emitowany`() {
+        val clock = FakeClock()
+        val s = FrameStabilizer(object : QuestionParser { override fun parse(frame: OcrFrame) = emptyList<DetectedQuestion>() }, 700L, { clock.now })
+        val f = frame("TEST")
+        s.onFrame(f); clock.advance(2000)
+        assertNull(s.onFrame(f))
+    }
+
+    @Test
     fun `emituje dopiero po czasie stabilnosci`() {
         val clock = FakeClock()
         val s = stabilizer(clock)

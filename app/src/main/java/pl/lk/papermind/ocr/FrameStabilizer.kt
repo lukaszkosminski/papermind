@@ -1,6 +1,9 @@
 package pl.lk.papermind.ocr
 
+import pl.lk.papermind.model.Box
 import pl.lk.papermind.model.CrosswordGrid
+import pl.lk.papermind.model.DetectedQuestion
+import pl.lk.papermind.model.QuestionType
 import pl.lk.papermind.model.OcrFrame
 import pl.lk.papermind.model.ParsedPage
 
@@ -80,16 +83,23 @@ class FrameStabilizer(
         }
         if (now - anchorSince < requiredStabilityMs(text, grid)) return null
 
-        val questions = parser.parse(frame)
+        var questions = parser.parse(frame)
+        var fallback = false
         if (questions.isEmpty() && grid == null) {
-            // brak pytań (np. sam nagłówek) — sprawdzamy ponownie dopiero po kolejnym oknie stabilności
-            anchorSince = now
-            return null
+            if (isSubstantial(text)) {
+                // parser nie rozpoznał pytań, ale w kadrze jest sporo tekstu — AI dostaje całą stronę
+                questions = listOf(pageQuestion(frame))
+                fallback = true
+            } else {
+                // brak pytań (np. sam nagłówek) — sprawdzamy ponownie dopiero po kolejnym oknie stabilności
+                anchorSince = now
+                return null
+            }
         }
 
         val ids = questions.map { it.id }.toSet()
         val gridSignature = grid?.let { gridSignature(it) }
-        if (ids == lastEmittedIds && gridSignature == lastEmittedGridSig) {
+        if (!fallback && ids == lastEmittedIds && gridSignature == lastEmittedGridSig) {
             anchorSince = now
             return null
         }
@@ -98,7 +108,7 @@ class FrameStabilizer(
         if (previousText != null &&
             gridSignature == lastEmittedGridSig &&
             ids.size == lastEmittedIds?.size &&
-            TextNormalizer.similarityAtLeast(previousText, text, config.duplicateSimilarity)
+            TextNormalizer.similarityAtLeast(previousText, text, if (fallback) FALLBACK_DUPLICATE_SIMILARITY else config.duplicateSimilarity)
         ) {
             anchorSince = now
             return null
@@ -122,6 +132,19 @@ class FrameStabilizer(
             questions = questions,
             rawText = text,
             grid = grid,
+        )
+    }
+
+    /** Tekst wystarczająco długi, by warto było wysłać go do AI bez rozpoznanych pytań. */
+    private fun isSubstantial(text: String): Boolean =
+        text.length >= FALLBACK_MIN_CHARS && text.split(Regex("\\s+")).count { it.length > 1 } >= FALLBACK_MIN_WORDS
+
+    private fun pageQuestion(frame: OcrFrame): DetectedQuestion {
+        val boxes = frame.lines.map { it.box }
+        return DetectedQuestion(
+            id = PAGE_QUESTION_ID, number = null, type = QuestionType.OPEN, text = frame.fullText,
+            options = emptyList(),
+            box = Box(boxes.minOf { it.left }, boxes.minOf { it.top }, boxes.maxOf { it.right }, boxes.maxOf { it.bottom }),
         )
     }
 
@@ -157,6 +180,11 @@ class FrameStabilizer(
 
     companion object {
         const val DEFAULT_STABILITY_MS = 700L
+        /** Id pytania „cała strona” (zgodne z AnswerServiceImpl.PAGE_QUESTION_ID). */
+        const val PAGE_QUESTION_ID = "page"
+        private const val FALLBACK_MIN_CHARS = 30
+        private const val FALLBACK_MIN_WORDS = 5
+        private const val FALLBACK_DUPLICATE_SIMILARITY = 0.9
 
         /** Podpis siatki do deduplikacji: wymiary + wzór pól + numeracja + sloty (bez współrzędnych). */
         fun gridSignature(grid: CrosswordGrid): String = buildString {

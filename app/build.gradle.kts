@@ -12,8 +12,8 @@ android {
         applicationId = "pl.lk.papermind"
         minSdk = 31          // Gemini Nano (AICore) wymaga Androida 12+; S25U ma 15/16
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
     }
 
     buildTypes {

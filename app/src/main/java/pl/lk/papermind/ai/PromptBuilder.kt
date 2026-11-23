@@ -90,6 +90,12 @@ object PromptBuilder {
     }
 
     private fun StringBuilder.appendQuestion(alias: String, q: DetectedQuestion, grid: CrosswordGrid?) {
+        if (q.id == "page") {
+            appendLine("[id=$alias | type=OPEN | whole page]")
+            appendLine("No questions were detected automatically. Read the OCR text below: answer every question or task you find in it (this question may use up to 60 words in text; number the answers, e.g. \"1) B 2) 42\"); if there is none, summarize the page in one sentence.")
+            appendLine()
+            return
+        }
         append("[id=").append(alias).append(" | type=").append(q.type.name)
         if (q.clue == null) q.number?.let { append(" | no=").append(it) }
         q.clue?.let { c ->
