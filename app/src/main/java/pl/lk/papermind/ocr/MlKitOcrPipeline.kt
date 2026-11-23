@@ -463,9 +463,16 @@ class MlKitOcrPipeline(
         @Volatile
         private var sensorToView: Matrix? = null
 
+        private val gate = Sharpness.Gate()
+
         override fun analyze(image: ImageProxy) {
             val now = clock()
-            if (lastRunMs != Long.MIN_VALUE && now - lastRunMs < minIntervalMs) {
+            // ostrość liczymy dla każdej klatki (tanio); do OCR trafiają tylko ostre — rozmyte ruchem są pomijane
+            val sharp = runCatching {
+                val plane = image.planes.first()
+                gate.accept(Sharpness.score(plane.buffer, image.width, image.height, plane.rowStride), now)
+            }.getOrDefault(true)
+            if (!sharp || (lastRunMs != Long.MIN_VALUE && now - lastRunMs < minIntervalMs)) {
                 image.close()
                 return
             }
@@ -492,7 +499,7 @@ class MlKitOcrPipeline(
 
     companion object {
         private const val TAG = "MlKitOcrPipeline"
-        private const val MIN_ANALYSIS_INTERVAL_MS = 120L
+        private const val MIN_ANALYSIS_INTERVAL_MS = 80L
 
         /** Detekcja siatki najwyżej co tyle ms (nie każda klatka — oszczędność CPU). */
         private const val GRID_INTERVAL_MS = 500L
