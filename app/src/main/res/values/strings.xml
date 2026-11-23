@@ -65,6 +65,10 @@
     <string name="settings_logs_copy">Kopiuj</string>
     <string name="settings_logs_clear">Wyczyść</string>
     <string name="settings_logs_empty">Brak zdarzeń — skieruj kamerę na tekst i wróć tutaj.</string>
+    <string name="settings_go_hint">OpenCode Go: wklej klucz API z opencode.ai/console (Account → Personal API keys), potem pobierz listę modeli i wybierz model.</string>
+    <string name="settings_go_models">Pobierz listę modeli</string>
+    <string name="settings_go_selected">Wybrany model: %1$s</string>
+    <string name="settings_go_error">Nie udało się pobrać modeli: %1$s</string>
     <string name="settings_behavior">Zachowanie</string>
     <string name="settings_language">Język odpowiedzi</string>
     <string name="settings_explanations">Pokazuj uzasadnienia</string>

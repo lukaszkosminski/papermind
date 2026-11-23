@@ -95,6 +95,8 @@ class CloudEngine(
                 .header("x-goog-api-key", s.cloudApiKey).get().build()
             CloudProvider.OPENAI -> Request.Builder().url("$base/v1/models")
                 .header("Authorization", "Bearer ${s.cloudApiKey}").get().build()
+            // /v1/usage: 401 = zły klucz, 403 = brak aktywnej subskrypcji Go
+            CloudProvider.OPENCODE_GO -> OpenCodeGoApi.headers(Request.Builder().url("$base/v1/usage"), s.cloudApiKey).get().build()
         }
     }
 
@@ -178,6 +180,28 @@ class CloudEngine(
                     .header("Authorization", "Bearer ${s.cloudApiKey}")
                     .post(body.toString().toRequestBody(media)).build()
             }
+            CloudProvider.OPENCODE_GO -> {
+                val withImage = image != null && model in OpenCodeGoApi.imageModels
+                val body = buildJsonObject {
+                    put("model", model)
+                    put("max_tokens", MAX_OUTPUT_TOKENS)
+                    putJsonArray("messages") {
+                        add(buildJsonObject { put("role", "system"); put("content", prompt.system) })
+                        add(buildJsonObject {
+                            put("role", "user")
+                            if (!withImage) put("content", prompt.user) else putJsonArray("content") {
+                                add(buildJsonObject { put("type", "text"); put("text", prompt.user) })
+                                add(buildJsonObject {
+                                    put("type", "image_url")
+                                    putJsonObject("image_url") { put("url", "data:image/jpeg;base64,$image") }
+                                })
+                            }
+                        })
+                    }
+                }
+                OpenCodeGoApi.headers(Request.Builder().url("$base/openai/v1/chat/completions"), s.cloudApiKey)
+                    .post(body.toString().toRequestBody(media)).build()
+            }
         }
     }
 
@@ -189,6 +213,7 @@ class CloudEngine(
             CloudProvider.ANTHROPIC to "https://api.anthropic.com",
             CloudProvider.GEMINI to "https://generativelanguage.googleapis.com",
             CloudProvider.OPENAI to "https://api.openai.com",
+            CloudProvider.OPENCODE_GO to OpenCodeGoApi.BASE_URL,
         )
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -196,12 +221,14 @@ class CloudEngine(
             CloudProvider.ANTHROPIC -> "claude-haiku-5-5"
             CloudProvider.GEMINI -> "gemini-3.8-flash"
             CloudProvider.OPENAI -> "gpt-6-luna"
+            CloudProvider.OPENCODE_GO -> OpenCodeGoApi.DEFAULT_MODEL
         }
 
         private fun CloudProvider.label() = when (this) {
             CloudProvider.ANTHROPIC -> "Anthropic"
             CloudProvider.GEMINI -> "Gemini API"
             CloudProvider.OPENAI -> "OpenAI"
+            CloudProvider.OPENCODE_GO -> "OpenCode Go"
         }
 
         fun defaultClient(): OkHttpClient = Http.sharedClient.newBuilder()
@@ -221,7 +248,7 @@ class CloudEngine(
                     ?.get("content") as? JsonObject)?.get("parts").let { it as? JsonArray }.orEmpty()
                     .filterIsInstance<JsonObject>()
                     .joinToString("") { it.str("text").orEmpty() }
-                CloudProvider.OPENAI -> (((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)
+                CloudProvider.OPENAI, CloudProvider.OPENCODE_GO -> (((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)
                     ?.get("message") as? JsonObject)?.str("content").orEmpty()
             }
         }

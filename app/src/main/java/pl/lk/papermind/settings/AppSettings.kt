@@ -3,7 +3,7 @@ package pl.lk.papermind.settings
 import kotlinx.coroutines.flow.Flow
 import pl.lk.papermind.model.EngineId
 
-enum class CloudProvider { ANTHROPIC, GEMINI, OPENAI }
+enum class CloudProvider { ANTHROPIC, GEMINI, OPENAI, OPENCODE_GO }
 
 data class AppSettings(
     val engine: EngineId = EngineId.GEMINI_NANO,

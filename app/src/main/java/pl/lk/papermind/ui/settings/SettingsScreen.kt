@@ -120,7 +120,11 @@ fun SettingsScreen(
                     }
                 }
                 TextSetting(R.string.settings_cloud_key, settings.cloudApiKey, secret = true) { v -> onUpdate { it.copy(cloudApiKey = v.trim()) } }
-                TextSetting(R.string.settings_cloud_model, settings.cloudModel, hint = R.string.settings_model_default_hint) { v -> onUpdate { it.copy(cloudModel = v.trim()) } }
+                if (settings.cloudProvider == CloudProvider.OPENCODE_GO) {
+                    OpenCodeGoModelPicker(settings.cloudApiKey, settings.cloudModel) { m -> onUpdate { it.copy(cloudModel = m) } }
+                } else {
+                    TextSetting(R.string.settings_cloud_model, settings.cloudModel, hint = R.string.settings_model_default_hint) { v -> onUpdate { it.copy(cloudModel = v.trim()) } }
+                }
             }
 
             Section(R.string.settings_updates) { UpdateSection() }
@@ -152,6 +156,7 @@ private fun providerName(p: CloudProvider) = when (p) {
     CloudProvider.ANTHROPIC -> "Anthropic"
     CloudProvider.GEMINI -> "Gemini"
     CloudProvider.OPENAI -> "OpenAI"
+    CloudProvider.OPENCODE_GO -> "OpenCode Go"
 }
 
 @Composable
