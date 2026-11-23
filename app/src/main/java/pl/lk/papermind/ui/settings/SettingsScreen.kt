@@ -123,6 +123,8 @@ fun SettingsScreen(
                 TextSetting(R.string.settings_cloud_model, settings.cloudModel, hint = R.string.settings_model_default_hint) { v -> onUpdate { it.copy(cloudModel = v.trim()) } }
             }
 
+            Section(R.string.settings_updates) { UpdateSection() }
+
             Section(R.string.settings_behavior) {
                 Text(stringResource(R.string.settings_language), style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

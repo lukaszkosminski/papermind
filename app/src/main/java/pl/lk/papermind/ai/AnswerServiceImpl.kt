@@ -245,7 +245,7 @@ class AnswerServiceImpl(
         /** Krzyżówka = więcej haseł + druga runda poprawkowa, więc limit czasu na silnik ×2. */
         const val CROSSWORD_TIMEOUT_FACTOR = 2
         val DEFAULT_TIMEOUTS_MS = mapOf(
-            EngineId.GEMINI_NANO to 20_000L,
+            EngineId.GEMINI_NANO to 90_000L,
             EngineId.OPENCODE to 45_000L,
             EngineId.CLOUD to 30_000L,
         )

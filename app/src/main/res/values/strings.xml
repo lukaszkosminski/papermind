@@ -50,6 +50,15 @@
     <string name="settings_cloud">Chmura</string>
     <string name="settings_cloud_key">Klucz API</string>
     <string name="settings_cloud_model">Model</string>
+    <string name="settings_updates">Aktualizacje</string>
+    <string name="settings_updates_version">Zainstalowana wersja: %1$s</string>
+    <string name="settings_updates_check">Sprawdź aktualizacje</string>
+    <string name="settings_updates_latest">Masz najnowszą wersję</string>
+    <string name="settings_updates_available">Dostępna wersja %1$s</string>
+    <string name="settings_updates_download">Pobierz i zainstaluj</string>
+    <string name="settings_updates_install">Zainstaluj</string>
+    <string name="settings_updates_permission">Zezwól PaperMind na instalowanie aplikacji, wróć i dotknij „Zainstaluj”</string>
+    <string name="settings_updates_error">Błąd: %1$s</string>
     <string name="settings_behavior">Zachowanie</string>
     <string name="settings_language">Język odpowiedzi</string>
     <string name="settings_explanations">Pokazuj uzasadnienia</string>

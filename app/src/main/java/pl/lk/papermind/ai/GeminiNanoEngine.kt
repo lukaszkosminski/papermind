@@ -56,8 +56,8 @@ class GeminiNanoEngine(
      */
     private fun candidates(): List<Pair<String, GenerativeModel>> = listOf(
         "stable" to { Generation.getClient() },
-        "preview-full" to { Generation.getClient(config(ModelReleaseStage.PREVIEW, ModelPreference.FULL)) },
         "preview-fast" to { Generation.getClient(config(ModelReleaseStage.PREVIEW, ModelPreference.FAST)) },
+        "preview-full" to { Generation.getClient(config(ModelReleaseStage.PREVIEW, ModelPreference.FULL)) },
     ).map { (n, f) -> n to f() }
 
     private fun config(stage: Int, pref: Int): GenerationConfig = GenerationConfig.Builder().apply {
