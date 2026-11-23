@@ -9,7 +9,11 @@ import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.ImagePart
+import com.google.mlkit.genai.prompt.GenerationConfig
 import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.ModelConfig
+import com.google.mlkit.genai.prompt.ModelPreference
+import com.google.mlkit.genai.prompt.ModelReleaseStage
 import com.google.mlkit.genai.prompt.SystemInstruction
 import com.google.mlkit.genai.prompt.TextPart
 import kotlinx.coroutines.CancellationException
@@ -46,13 +50,43 @@ class GeminiNanoEngine(
 
     private fun client(): GenerativeModel = model ?: Generation.getClient().also { model = it }
 
+    /**
+     * Konfiguracje modelu w kolejności preferencji. Na urządzeniach z AICore Developer Preview
+     * (Gemini Nano 4 [Preview]) domyślny tryb STABLE bywa UNAVAILABLE, więc próbujemy też PREVIEW.
+     */
+    private fun candidates(): List<Pair<String, GenerativeModel>> = listOf(
+        "stable" to { Generation.getClient() },
+        "preview-full" to { Generation.getClient(config(ModelReleaseStage.PREVIEW, ModelPreference.FULL)) },
+        "preview-fast" to { Generation.getClient(config(ModelReleaseStage.PREVIEW, ModelPreference.FAST)) },
+    ).map { (n, f) -> n to f() }
+
+    private fun config(stage: Int, pref: Int): GenerationConfig = GenerationConfig.Builder().apply {
+        modelConfig = ModelConfig.Builder().apply {
+            releaseStage = stage
+            preference = pref
+        }.build()
+    }.build()
+
+    /** Wybiera pierwszą konfigurację, której status != UNAVAILABLE, i zapamiętuje klienta. */
+    private suspend fun selectModel(): Pair<GenerativeModel, Int> {
+        model?.let { return it to it.checkStatus() }
+        var last: Pair<GenerativeModel, Int>? = null
+        for ((name, m) in candidates()) {
+            val st = runCatching { m.checkStatus() }.getOrElse { if (it is CancellationException) throw it else FeatureStatus.UNAVAILABLE }
+            Log.i(TAG, "config=$name checkStatus=$st")
+            if (last == null) last = m to st
+            if (st != FeatureStatus.UNAVAILABLE) { model = m; return m to st }
+        }
+        return last!!
+    }
+
     override suspend fun isAvailable(): Boolean = status().available
 
     override suspend fun status(): EngineStatus {
         val aiCore = aiCoreVersion()
             ?: return EngineStatus(false, "Brak aplikacji AICore (Android AICore) — zainstaluj/zaktualizuj ją w Sklepie Play")
         return try {
-            val st = client().checkStatus()
+            val (_, st) = selectModel()
             Log.i(TAG, "checkStatus=$st aicore=$aiCore")
             when (st) {
                 FeatureStatus.AVAILABLE -> EngineStatus(true, "Gemini Nano gotowy (AICore $aiCore)")
@@ -103,7 +137,7 @@ class GeminiNanoEngine(
     }
 
     override suspend fun answer(page: ParsedPage): List<Answer> = lock.withLock {
-        val m = client()
+        val m = model ?: selectModel().first
         val language = settings?.first()?.language
         val tokenLimit = runCatching { m.getTokenLimit() }.getOrNull()
         val image = page.snapshotJpeg?.takeIf { it.isNotEmpty() }
